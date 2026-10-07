@@ -58,6 +58,8 @@ function readBody(req, limit = 120000) {
 }
 function validTrack(t) {
   if (!t || typeof t !== 'object' || !Array.isArray(t.pts) || t.pts.length < 4 || t.pts.length > 160) return false;
+  if (t.items != null && (!Array.isArray(t.items) || t.items.length > 400)) return false;
+  if (t.props != null && (!Array.isArray(t.props) || t.props.length > 900)) return false;
   for (const p of t.pts) if (!Array.isArray(p) || !isFinite(p[0]) || !isFinite(p[1]) || Math.abs(p[0]) > 20000 || Math.abs(p[1]) > 20000) return false;
   return true;
 }

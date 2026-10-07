@@ -113,7 +113,7 @@ export const Editor = {
     const p = this.t.pts[this.sel]; if (!p) return; this.snapshot(); p[2] = clamp(Math.round((p[2] || this.t.width) + d), 90, 300); this.recompile(); this.say('Width at this point: ' + p[2]);
   },
   onKey(e) {
-    if (!this.active || Input.isTyping()) return;
+    if (!this.active || Input.isTyping() || UI.modals.length) return;
     const k = e.code, ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && k === 'KeyZ') { e.preventDefault(); this.doUndo(); }
     else if (k === 'Digit1') this.setTool('points'); else if (k === 'Digit2') this.setTool('items'); else if (k === 'Digit3') this.setTool('props');
@@ -129,7 +129,7 @@ export const Editor = {
 
   /* gamepad cursor (call each frame) */
   pad(dt) {
-    const p = Input.getPad(); if (!p) { this.cursor.vis = false; return; }
+    const p = Input.getPad(); if (!p || UI.modals.length) { if (!p) this.cursor.vis = false; return; }
     const ax = Math.abs(p.axes[0]) > 0.15 ? p.axes[0] : 0, ay = Math.abs(p.axes[1]) > 0.15 ? p.axes[1] : 0;
     const bx = Math.abs(p.axes[2] || 0) > 0.15 ? p.axes[2] : 0, by = Math.abs(p.axes[3] || 0) > 0.15 ? p.axes[3] : 0;
     if (!this.cursor.vis) { this.cursor.x = this.cam.x; this.cursor.y = this.cam.y; }

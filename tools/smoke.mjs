@@ -1,5 +1,5 @@
 // Headless smoke test: node tools/smoke.mjs [url]   (needs playwright; used during development)
-import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+import { chromium } from './_pw.mjs';
 const url = process.argv[2] || 'http://localhost:3000/';
 const out = process.env.SHOTS || '/tmp/shots';
 import fs from 'node:fs'; fs.mkdirSync(out, { recursive: true });

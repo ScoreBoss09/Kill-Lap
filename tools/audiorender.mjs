@@ -1,5 +1,5 @@
 // Renders every song + sfx offline in Chromium and writes mono 16-bit WAVs to a directory (for analysis): node tools/audiorender.mjs outdir
-import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+import { chromium } from './_pw.mjs';
 import fs from 'node:fs';
 const outdir = process.argv[2] || '/tmp/audio'; fs.mkdirSync(outdir, { recursive: true });
 const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });

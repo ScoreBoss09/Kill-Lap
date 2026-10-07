@@ -1,5 +1,5 @@
 // Two-client multiplayer test through the real UI + server.
-import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+import { chromium } from './_pw.mjs';
 const out = process.env.SHOTS || '/tmp/shots';
 const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
 const mk = async name => { const ctx = await b.newContext({ viewport: { width: 1100, height: 650 } }); const p = await ctx.newPage(); p._errs = []; p.on('console', m => { if (m.type() === 'error') p._errs.push(name + ': ' + m.text()); }); p.on('pageerror', e => p._errs.push(name + ' PAGEERROR ' + e.message)); await p.goto('http://localhost:3000/'); await p.waitForTimeout(1200); await p.evaluate(n => { const s = JSON.parse(localStorage.getItem('killlap.v1') || '{}'); s.name = n; localStorage.setItem('killlap.v1', JSON.stringify(s)); }, name); await p.reload(); await p.waitForTimeout(1200); return p; };

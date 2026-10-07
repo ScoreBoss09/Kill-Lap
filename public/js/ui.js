@@ -73,7 +73,7 @@ UI.move = function (dir) {
 };
 UI.activate = function () { const cur = this.scope().querySelector('.nv.focus'); if (cur) cur.click(); };
 UI.onKey = function (e) {
-  if (this.hidden || this.app.inRace() || this.app.inEditor()) return;
+  if (this.app.inRace() || (!this.modals.length && (this.hidden || this.app.inEditor()))) return;
   const typing = Input.isTyping();
   if ((e.code === 'Escape' || e.code === 'KeyP') && this.cur && this.cur.name === 'pause' && !this.modals.length) return; // the main loop toggles pause
   if (typing) { if (e.code === 'Escape') { document.activeElement.blur(); } else if (e.code === 'Enter' && document.activeElement.dataset.enter) { document.activeElement.dispatchEvent(new CustomEvent('submit')); } if (e.code !== 'ArrowDown' && e.code !== 'ArrowUp' || document.activeElement.tagName === 'TEXTAREA') return; }
@@ -84,7 +84,7 @@ UI.onKey = function (e) {
   else if (this.cur && this.cur.onKey) this.cur.onKey(e);
 };
 UI.onPad = function (k) {
-  if (this.hidden || this.app.inRace() || this.app.inEditor()) return; Audio.init();
+  if (this.app.inRace() || (!this.modals.length && (this.hidden || this.app.inEditor()))) return; Audio.init();
   if (['up', 'down', 'left', 'right'].includes(k)) this.dir(k); else if (k === 'ok') this.activate(); else if (k === 'back') this.back();
   else if (this.cur && this.cur.onPad) this.cur.onPad(k);
 };
@@ -95,7 +95,7 @@ UI.dir = function (d) {
 };
 UI.modal = function (title, content, buttons = [{ t: 'Close', fn: null }], opts = {}) {
   const el = h('div', { class: 'modal-wrap' }, h('div', { class: 'modal ' + (opts.cls || '') }, h('h2', null, title), h('div', { class: 'modal-body' }, content), h('div', { class: 'row end' }, buttons.map(b => h('button', { class: 'btn nv' + (b.primary ? ' primary' : ''), onclick: () => { if (b.fn && b.fn() === false) return; this.closeModal(); } }, b.t)))));
-  root().append(el); this.modals.push({ el, onClose: opts.onClose }); this.focusFirst(); Audio.sfx('select'); return el;
+  document.getElementById('modals').append(el); this.modals.push({ el, onClose: opts.onClose }); this.focusFirst(); Audio.sfx('select'); return el;
 };
 UI.closeModal = function () { const m = this.modals.pop(); if (m) { m.el.remove(); m.onClose && m.onClose(); this.focusFirst(); Audio.sfx('back'); } };
 UI.clearModals = function () { while (this.modals.length) this.modals.pop().el.remove(); };
@@ -236,6 +236,7 @@ S.setup = (ctx, p) => {
     tt ? null : cycle('Opponents', Array.from({ length: 11 }, (_, i) => ({ v: i, t: String(i) })), cfg.opp, v => cfg.opp = v),
     tt ? null : cycle('Difficulty', DIFFICULTIES.map((x, i) => ({ v: i, t: x.name })), cfg.diff, v => cfg.diff = v),
     tt ? null : toggle('Weapons & pickups', cfg.weapons, v => cfg.weapons = v),
+    btn('🎲 RANDOM TRACK', () => { const t = generateTrack((Math.random() * 1e9) | 0); cfg.track = t; cfg.laps = 3; lapsEl.setOptions(lapOpts(), 3); refresh(); UI.toast('Generated: ' + t.name); }, 'ghost'),
     cycle('Car', owned, car, v => { d.car = v; Store.save(); }),
     btn(tt ? 'START TIME TRIAL' : 'START RACE', () => { Store.save(); UI.app.startRace({ mode, ...cfg, carId: Store.d.car }); }, 'primary big'), );
   return screenFrame(tt ? 'TIME TRIAL' : 'QUICK RACE', h('div', { class: 'row grow gap' }, left, right), h('div', { class: 'row' }, backBtn(), hint()));

@@ -1,5 +1,5 @@
 // Fast-forward a bots-only race in the browser to check lap times / AI / results flow: node tools/sim.mjs [trackId] [diff]
-import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+import { chromium } from './_pw.mjs';
 const track = process.argv[2] || 'dustbowl', diff = +(process.argv[3] ?? 1);
 const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
 const p = await b.newPage({ viewport: { width: 1280, height: 720 } });

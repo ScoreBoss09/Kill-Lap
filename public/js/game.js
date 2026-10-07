@@ -110,7 +110,8 @@ export class Game {
   drive(c, dt, racing) {
     const st = c.stats, T = this.T, inp = c.input;
     const cs = Math.cos(c.a), sn = Math.sin(c.a);
-    let vf = c.vx * cs + c.vy * sn, vl = -c.vx * sn + c.vy * cs;
+    let vf = c.vx * cs + c.vy * sn;
+    const vf0 = vf;
     const nr = nearest(T, c.x, c.y, c.pos);
     c.pos = nr.f; c.lat = nr.lat; const alat = Math.abs(nr.lat), off = alat > nr.hw;
     c.surface = off ? 'grass' : 'road';
@@ -140,15 +141,17 @@ export class Game {
     c.w += (wT - c.w) * Math.min(1, 10 * dt);
     if (c.oilT > 0) c.w += Math.sin(this.time * 17 + c.slot) * 5 * dt * 10;
     c.a += c.w * dt; c.steerVis += (inp.steer - c.steerVis) * Math.min(1, 12 * dt);
-    // lateral grip
-    const G = 1150 * st.grip * (inp.hb ? 0.28 : 1) * (off ? 0.72 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.9 : 1);
-    const dv = clamp(-vl * 14, -G, G) * dt;
-    vl += Math.abs(dv) > Math.abs(vl) ? -vl : dv;
-    if (inp.hb) vf -= vf * 0.55 * dt;
-    c.slip = Math.abs(vl);
+    // The heading has rotated but the car's momentum has not: project the world-space velocity into the new
+    // frame, apply the longitudinal forces, then let tyre grip drag the sideways component back (this is what lets
+    // the car slide when it is turned hard, overloaded by nitro, on grass, on oil, or on the handbrake).
     const cs2 = Math.cos(c.a), sn2 = Math.sin(c.a);
-    // re-project velocity into the rotated frame
-    c.vx = cs2 * vf - sn2 * vl; c.vy = sn2 * vf + cs2 * vl;
+    let vf2 = c.vx * cs2 + c.vy * sn2 + (vf - vf0), vl = -c.vx * sn2 + c.vy * cs2;
+    const G = 1000 * st.grip * (inp.hb ? 0.3 : 1) * (off ? 0.7 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.92 : 1);
+    const dv = clamp(-vl * 9, -G, G) * dt;
+    vl += Math.abs(dv) > Math.abs(vl) ? -vl : dv;
+    if (inp.hb) vf2 -= vf2 * 0.3 * dt;
+    c.slip = Math.abs(vl); vf = vf2;
+    c.vx = cs2 * vf2 - sn2 * vl; c.vy = sn2 * vf2 + cs2 * vl;
     c.x += c.vx * dt; c.y += c.vy * dt;
     const sp = Math.hypot(c.vx, c.vy); c.maxSpeed = Math.max(c.maxSpeed, sp);
     if (c.human) this.stats.topSpeed = Math.max(this.stats.topSpeed, sp);
@@ -261,8 +264,7 @@ export class Game {
 
   /* ---------------------------------------------------------------- damage / death */
   damage(c, amt, by, kind) {
-    if (c.dead || c.invuln > 0 || c.finished && !c.human && false) return;
-    if (c.remote) return;
+    if (c.dead || c.invuln > 0 || c.remote) return;
     c.hp -= amt; c.lapDamage += amt; c.lastHitBy = by || c.lastHitBy;
     if (c.human) { this.stats.dmgTaken = (this.stats.dmgTaken || 0) + amt; if (amt > 4) { this.shake = Math.max(this.shake, clamp(amt / 4, 1, 8)); Input.rumble(clamp(amt / 25, 0.15, 1), 0.4, 160); this.hudFlash = Math.max(this.hudFlash, 0.25); } }
     if (c.hp <= 0) this.wreck(c, by);

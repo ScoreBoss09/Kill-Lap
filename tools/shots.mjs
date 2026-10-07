@@ -1,5 +1,5 @@
 // Screenshot each theme mid-race: node tools/shots.mjs id1,id2,...
-import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+import { chromium } from './_pw.mjs';
 const ids = (process.argv[2] || 'dustbowl,pinewood,frostbite,neon,foundry,inferno,seaside,canyon').split(',');
 const out = process.env.SHOTS || '/tmp/shots';
 const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });

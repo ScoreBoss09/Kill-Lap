@@ -95,7 +95,7 @@ const app = {
     } catch (e) { UI.toast('Failed to build track', 'bad'); return; }
     this.cfg = { mode: 'race', track, laps: room.laps, diff: room.diff, mp: true };
     Net.on('st', msg => this.game && this.game.onNet(msg)).on('ev', msg => this.game && this.game.onNet(msg))
-      .on('left', msg => { const c = this.game && this.game.byId[msg.id]; if (c) { c.dead = true; c.finished = c.finished; c.remote = true; c.x = -9999; this.game.feedAdd(c.name + ' left the race', '#aaa'); this.game.cars = this.game.cars.filter(x => x !== c); delete this.game.byId[msg.id]; } })
+      .on('left', msg => { const c = this.game && this.game.byId[msg.id]; if (c) { c.dead = true; c.finished = c.finished; c.remote = true; c.x = -9999; if (c.voice) { c.voice.stop(); c.voice = null; } this.game.feedAdd(c.name + ' left the race', '#aaa'); this.game.cars = this.game.cars.filter(x => x !== c); delete this.game.byId[msg.id]; } })
       .on('fin', msg => { if (this.game) this.game.feedAdd(msg.name + ' finished (' + fmtTime(msg.time) + ')', '#9fe3ff'); })
       .on('results', msg => { if (this.game) this.game.endRace(msg.results); })
       .on('room', msg => {
