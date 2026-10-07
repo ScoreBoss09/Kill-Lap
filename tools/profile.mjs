@@ -1,0 +1,15 @@
+import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
+const id = process.argv[2] || 'neon';
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
+const p = await b.newPage({ viewport: { width: 1920, height: 1080 } });
+await p.goto('http://localhost:3000/'); await p.waitForTimeout(1200);
+await p.evaluate(async id => { const { findTrack } = await import('/js/ui.js'); await KL.startRace({ mode: 'race', track: findTrack(id), laps: 3, opp: 11, diff: 2, weapons: true, carId: 'scrapper' }); KL.game.human.auto = true; }, id);
+await p.waitForTimeout(6000);
+const cdp = await p.context().newCDPSession(p); await cdp.send('Profiler.enable'); await cdp.send('Profiler.start');
+await p.evaluate(() => { const g = KL.game, c = document.getElementById('game').getContext('2d'); for (let i = 0; i < 150; i++) { g.frame(1 / 60, {}); g.render(c, c.canvas.width, c.canvas.height, 1 / 60); } });
+const { profile } = await cdp.send('Profiler.stop');
+const self = new Map(); const dt = profile.timeDeltas; const idx = new Map(profile.nodes.map(n => [n.id, n]));
+profile.samples.forEach((s, i) => { const n = idx.get(s); const k = n.callFrame.functionName + ' ' + n.callFrame.url.split('/').pop() + ':' + n.callFrame.lineNumber; self.set(k, (self.get(k) || 0) + (dt[i] || 0)); });
+const tot = [...self.values()].reduce((a, b) => a + b, 0);
+console.log([...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 18).map(([k, v]) => (v / tot * 100).toFixed(1).padStart(5) + '%  ' + k).join('\n'));
+await b.close();
