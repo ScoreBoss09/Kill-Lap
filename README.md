@@ -154,7 +154,9 @@ Run `npm test` to validate every built-in and 40 generated tracks. The scripts i
 
 ## Performance tips
 
-If the game stutters, open **Settings → Graphics quality** and pick *Low*: it renders at a capped lower resolution, bakes the terrain at half resolution, turns off textures on bridges and tunnels, thins out small scenery and drops car lights. The game also lowers its own render resolution automatically if the frame rate stays under about 40 fps. Flyovers, tunnels and barriers are drawn into a cached layer, and engine sounds play only for the nearest cars, so heavy scenes (lots of cars boosting, overpasses) cost much less than before.
+The game uses a fixed 3/4 view, so everything that doesn't move - terrain, road, barriers, flyovers, tunnel hills, buildings and trees - is drawn once into map tiles while the line-up screen is showing. During the race only cars, people, traffic, weapons and effects are drawn each frame, so overpasses and tunnels cost no more than open road and nothing wobbles or re-stitches.
+
+If the game still stutters, open **Settings → Graphics quality** and pick *Low*: it renders at a capped lower resolution, bakes the map at half resolution and drops textures, car lights and cloud shadows. The game also lowers its render resolution automatically if the frame rate stays under about 40 fps.
 
 ## Troubleshooting
 

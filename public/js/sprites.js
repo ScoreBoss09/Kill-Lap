@@ -1,18 +1,22 @@
-// Pseudo-3D sprite drawing. Everything with height is projected with a simple perspective term so that
-// tall things lean away from the screen centre, giving the classic angled top-down look.
+// Pseudo-3D sprite drawing with a fixed 3/4 (oblique) projection: anything with height is drawn shifted straight up
+// the screen by LEAN * height. Because the projection does not depend on where the camera is, all static scenery,
+// barriers, flyovers and tunnel hills can be baked once into the terrain tiles - nothing wobbles or re-stitches.
 import { shade, rgba, TAU, mulberry32, clamp } from './util.js';
 import Tex from './textures.js';
 
-export const PERSP = 0.0011;
+export const LEAN = 0.42;
+export const PERSP = 0; // (kept for compatibility: the old camera-relative perspective is gone)
 
 export class View {
   constructor() { this.x = 0; this.y = 0; this.zoom = 1; this.W = 800; this.H = 600; this.shakeX = 0; this.shakeY = 0; this.t = 0; this.quality = 2; }
   sx(wx) { return (wx - this.x) * this.zoom + this.W / 2 + this.shakeX; }
   sy(wy) { return (wy - this.y) * this.zoom + this.H / 2 + this.shakeY; }
   /** projected screen position of world point at height h */
-  px(wx, wy, h) { const a = this.sx(wx); return a + (a - this.W / 2) * h * PERSP; }
-  py(wx, wy, h) { const a = this.sy(wy); return a + (a - this.H / 2) * h * PERSP; }
-  scale(h) { return this.zoom * (1 + h * PERSP); }
+  px(wx, wy, h) { return this.sx(wx); }
+  py(wx, wy, h) { return this.sy(wy) - h * LEAN * this.zoom; }
+  scale(h) { return this.zoom; }
+  /** the viewer sits far to the south: faces whose normal points +y are the visible ones */
+  get cx() { return 0; } get cy() { return 1e9; }
   visible(wx, wy, r) { const m = r * this.zoom + 200 * this.zoom; return Math.abs(this.sx(wx) - this.W / 2) < this.W / 2 + m && Math.abs(this.sy(wy) - this.H / 2) < this.H / 2 + m; }
 }
 
@@ -45,7 +49,7 @@ export function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
     // outward normal of the wall; skip walls facing away from the camera (they are hidden behind the roof)
     const mx = (corners[i][0] + corners[j][0]) / 2 - cx, my = (corners[i][1] + corners[j][1]) / 2 - cy;
     const ml = Math.hypot(mx, my) || 1;
-    if (((v.x - (cx + mx)) * mx + (v.y - (cy + my)) * my) / ml < -2) continue;
+    if (((v.cx - (cx + mx)) * mx + (v.cy - (cy + my)) * my) / ml < -2) continue;
     const light = clamp(0.5 - (mx * 0.5 + my * 0.8) / ml * 0.28, 0.2, 0.9);
     g.fillStyle = shade(colWall, (light - 0.55) * 0.9);
     g.beginPath(); g.moveTo(base[i][0], base[i][1]); g.lineTo(base[j][0], base[j][1]); g.lineTo(top[j][0], top[j][1]); g.lineTo(top[i][0], top[i][1]); g.closePath(); g.fill();
@@ -65,7 +69,7 @@ export function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
     const slopes = alongW ? [[[top[0], top[1], RB, RA], [-s, c]], [[top[3], top[2], RB, RA], [s, -c]]] : [[[top[0], top[3], RB, RA], [-c, -s]], [[top[1], top[2], RB, RA], [c, s]]];
     const ends = alongW ? [[top[0], RA, top[3]], [top[1], RB, top[2]]] : [[top[0], RA, top[1]], [top[3], RB, top[2]]];
     g.fillStyle = shade(colWall, -0.12); for (const e of ends) { g.beginPath(); e.forEach(([x, y], k) => k ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.fill(); }
-    const wall = sl => { const n = sl[1]; return (v.x - cx) * n[0] + (v.y - cy) * n[1]; }; slopes.sort((a, b) => wall(a) - wall(b)); // far slope first
+    const wall = sl => { const n = sl[1]; return (v.cx - cx) * n[0] + (v.cy - cy) * n[1]; }; slopes.sort((a, b) => wall(a) - wall(b)); // far slope first
     for (const sl of slopes) { const n = sl[1], light = clamp(0.5 + (n[0] * -0.5 + n[1] * -0.8) * 0.32, 0.15, 0.9); sl[1] = n; poly(sl[0], shade(colRoof, (light - 0.5) * 0.7)); }
     g.strokeStyle = shade(colRoof, -0.35); g.lineWidth = Math.max(1, 1.6 * v.zoom); g.beginPath(); g.moveTo(RA[0], RA[1]); g.lineTo(RB[0], RB[1]); g.stroke();
     return top;

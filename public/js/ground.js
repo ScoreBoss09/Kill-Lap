@@ -2,10 +2,15 @@
 // so very large worlds cost only the memory of tiles the cars actually visit. Skid marks / scorch marks
 // are stamped straight into the tiles.
 import { VERGE, pointAt, shoreWob } from './tracks.js';
+import { View, drawProp } from './sprites.js';
+import { makeVis, drawWalls, drawDecks, drawDeckShadows, drawTunnels } from './structures.js';
 import { mulberry32, shade, rgba, TAU, hashStr } from './util.js';
 import Tex from './textures.js';
 
 export const TS = 512;
+/** props that animate (drawn every frame) or lie flat on the ground (baked into the ground layer, under the cars) */
+export const DYNAMIC = new Set(['lava']);
+const FLAT = new Set(['crater', 'dune']);
 const noiseCache = {};
 function noisePattern(ctx, kind) {
   let c = noiseCache[kind];
@@ -28,19 +33,20 @@ export class Ground {
     this.res = quality >= 2 ? 1 : quality >= 1 ? 0.75 : 0.5; // lower quality bakes the terrain at lower resolution (less memory and fill)
     this.maxTiles = quality >= 2 ? 150 : 200; this.cx = 0; this.cy = 0; // keep the whole map baked so nothing is rebuilt mid-race (rebuilding while flying along on nitro caused stutters)
     this.cols = Math.ceil(T.W / TS); this.rows = Math.ceil(T.H / TS);
-    this.px = null;
+    this.px = null; this.over = new Map(); // second, transparent tile layer: flyovers, tunnel hills and scenery (drawn above ground-level cars)
+    this.pgrid = new Map(); for (const p of T.props) { if (DYNAMIC.has(p.type)) continue; const k = this.key(Math.floor(p.x / TS), Math.floor(p.y / TS)); (this.pgrid.get(k) || this.pgrid.set(k, []).get(k)).push(p); }
   }
   key(tx, ty) { return tx + ty * 1000; }
   /** drop the baked tiles farthest from the camera */
   evict() {
     const arr = [...this.tiles.keys()].map(k => { const tx = k % 1000, ty = Math.floor(k / 1000); return [k, Math.hypot((tx + 0.5) * TS - this.cx, (ty + 0.5) * TS - this.cy)]; }).sort((a, b) => b[1] - a[1]);
-    for (let i = 0; i < arr.length && this.tiles.size > this.maxTiles - 8; i++) if (arr[i][1] > 2200) { this.tiles.delete(arr[i][0]); this.pend.delete(arr[i][0]); }
+    for (let i = 0; i < arr.length && this.tiles.size > this.maxTiles - 8; i++) if (arr[i][1] > 2200) { this.tiles.delete(arr[i][0]); this.over.delete(arr[i][0]); this.pend.delete(arr[i][0]); }
   }
   has(tx, ty) { return this.tiles.has(this.key(tx, ty)); }
   /** returns tile canvas, baking it if needed */
   tile(tx, ty) {
     const k = this.key(tx, ty); let t = this.tiles.get(k);
-    if (!t) { t = document.createElement('canvas'); t.width = t.height = Math.round(TS * this.res); this.bake(t, tx * TS, ty * TS); this.tiles.set(k, t); if (this.tiles.size > this.maxTiles) this.evict(); }
+    if (!t) { t = document.createElement('canvas'); t.width = t.height = Math.round(TS * this.res); this.bake(t, tx * TS, ty * TS); this.tiles.set(k, t); this.over.set(k, this.bakeOverlay(tx, ty)); if (this.tiles.size > this.maxTiles) this.evict(); }
     return t;
   }
   /** background baking: tiles along the track first (from the start line), then the rest; stops after `budgetMs` */
@@ -61,16 +67,39 @@ export class Ground {
     return true;
   }
   draw(ctx, camX, camY, zoom, W, H) {
-    const vw = W / zoom, vh = H / zoom, x0 = camX - vw / 2, y0 = camY - vh / 2; this.cx = camX; this.cy = camY;
-    const tx0 = Math.max(0, Math.floor(x0 / TS)), tx1 = Math.min(this.cols - 1, Math.floor((x0 + vw) / TS)), ty0 = Math.max(0, Math.floor(y0 / TS)), ty1 = Math.min(this.rows - 1, Math.floor((y0 + vh) / TS));
-    const th = this.T.th; ctx.fillStyle = th.ground2; ctx.fillRect(0, 0, W, H);
-    const sz = Math.ceil(TS * zoom) + 1;
-    for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
-      const t = this.tile(tx, ty);
-      ctx.drawImage(t, Math.floor((tx * TS - x0) * zoom), Math.floor((ty * TS - y0) * zoom), sz, sz);
-    }
+    this.cx = camX; this.cy = camY; const th = this.T.th; ctx.fillStyle = th.ground2; ctx.fillRect(0, 0, W, H);
+    this.blit(ctx, camX, camY, zoom, W, H, (tx, ty) => this.tile(tx, ty));
   }
-
+  /** draw the scenery/flyover layer; `holes` (screen-space Path2D) are drawn see-through (the tunnel you're in) */
+  drawOverlay(ctx, camX, camY, zoom, W, H, holes) {
+    const get = (tx, ty) => { const k = this.key(tx, ty); if (!this.over.has(k)) this.tile(tx, ty); return this.over.get(k); };
+    if (!holes) { this.blit(ctx, camX, camY, zoom, W, H, get); return; }
+    ctx.save(); const outside = new Path2D(); outside.rect(0, 0, W, H); outside.addPath(holes); ctx.clip(outside, 'evenodd'); this.blit(ctx, camX, camY, zoom, W, H, get); ctx.restore();
+    ctx.save(); ctx.clip(holes); ctx.globalAlpha = 0.32; this.blit(ctx, camX, camY, zoom, W, H, get); ctx.restore();
+  }
+  /** tiles are placed on a shared integer grid so neighbours always meet exactly (no seams, no 1px jitter) */
+  blit(ctx, camX, camY, zoom, W, H, get) {
+    const vw = W / zoom, vh = H / zoom, x0 = camX - vw / 2, y0 = camY - vh / 2;
+    const tx0 = Math.max(0, Math.floor(x0 / TS)), tx1 = Math.min(this.cols - 1, Math.floor((x0 + vw) / TS)), ty0 = Math.max(0, Math.floor(y0 / TS)), ty1 = Math.min(this.rows - 1, Math.floor((y0 + vh) / TS));
+    const X = tx => Math.round((tx * TS - x0) * zoom), Y = ty => Math.round((ty * TS - y0) * zoom);
+    for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) { const t = get(tx, ty); if (!t) continue; const x = X(tx), y = Y(ty); ctx.drawImage(t, x, y, X(tx + 1) - x, Y(ty + 1) - y); }
+  }
+  /** a View that maps world coordinates onto one tile's canvas (same projection as the screen, so baked 3D lines up) */
+  tileView(ox, oy) { const v = new View(); v.x = ox + TS / 2; v.y = oy + TS / 2; v.zoom = this.res; v.W = v.H = TS * this.res; v.quality = this.q; v.t = 0; return v; }
+  propsNear(ox, oy, pad, padS) {
+    const out = []; for (let ty = Math.floor((oy - pad) / TS); ty <= Math.floor((oy + TS + padS) / TS); ty++) for (let tx = Math.floor((ox - pad) / TS); tx <= Math.floor((ox + TS + pad) / TS); tx++) { const l = this.pgrid.get(this.key(tx, ty)); if (l) for (const p of l) if (p.x > ox - pad && p.x < ox + TS + pad && p.y > oy - pad && p.y < oy + TS + padS) out.push(p); }
+    return out.sort((a, b) => a.y - b.y);
+  }
+  bakeOverlay(tx, ty) {
+    const T = this.T, ox = tx * TS, oy = ty * TS, tv = this.tileView(ox, oy), vis = makeVis(T, tv);
+    const props = this.propsNear(ox, oy, 280, 280 + 360).filter(p => !FLAT.has(p.type)), deck = T.hasElev && vis.some(i => T.elev[i]), tun = T.hasTun && vis.some(i => T.tn[i]);
+    if (!props.length && !deck && !tun) return null;
+    const c = document.createElement('canvas'); c.width = c.height = Math.round(TS * this.res); const g = c.getContext('2d');
+    if (deck) drawDecks(g, tv, T, vis); if (tun) drawTunnels(g, tv, T, vis, -1);
+    for (const p of props) drawProp(g, tv, p, T.th, 0);
+    if (T.th.night) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = 'rgba(4,6,22,0.5)'; g.fillRect(0, 0, c.width, c.height); g.globalCompositeOperation = 'source-over'; }
+    return c;
+  }
   /* ---- decals ---- */
   /** skid marks are queued and painted into the terrain a few times a second in one batched stroke per tile
    *  (painting into a tile every physics step forces the GPU to re-upload it, which was a big slowdown) */
@@ -224,6 +253,12 @@ export class Ground {
       g.strokeStyle = th.wall; g.lineWidth = 11; g.beginPath(); this.edge(g, side, 'w'); g.stroke();
       g.strokeStyle = th.wallTop; g.lineWidth = 7; g.beginPath(); this.edge(g, side, 'w'); g.stroke();
     }
+    g.restore();
+    // 3D barriers, flyover shadows and flat scenery (craters, dunes) are baked into the ground layer with the screen's projection
+    g.save(); const tv = this.tileView(ox, oy), vis = makeVis(T, tv);
+    if (T.hasElev || T.hasTun) drawDeckShadows(g, tv, T, vis);
+    if (q >= 1) drawWalls(g, tv, T, vis);
+    for (const p of this.propsNear(ox, oy, 200, 200)) if (FLAT.has(p.type)) drawProp(g, tv, p, th, 0);
     g.restore();
   }
 

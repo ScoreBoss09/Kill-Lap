@@ -82,7 +82,7 @@ export function drawDecks(g, v, T, vis, part = 0, parts = 1) {
       const zl = (k, lat, extra = 0) => T.z[k] - T.tilt[k] * clamp(lat / (2 * T.hw[k]), -0.65, 0.65) + extra;
       const P = (k, lat, extra = 0) => { const [x, y] = pt(T, k, lat); const z = zl(k, lat, extra); return [v.px(x, y, z), v.py(x, y, z)]; };
       const G = (k, lat) => { const [x, y] = pt(T, k, lat); return [v.px(x, y, 0), v.py(x, y, 0)]; };
-      const cx = (T.x[i] + T.x[j]) / 2, cy = (T.y[i] + T.y[j]) / 2, camLat = (v.x - cx) * -T.ty[i] + (v.y - cy) * T.tx[i];
+      const cx = (T.x[i] + T.x[j]) / 2, cy = (T.y[i] + T.y[j]) / 2, camLat = (v.cx - cx) * -T.ty[i] + (v.cy - cy) * T.tx[i];
       const jq = ((i * 2654435761) >>> 30) % 3;
       if (Math.max(zi, zj) >= 40) { // mountain earthworks: rock shoulder sloping down to the valley floor
         for (const s of [-1, 1]) {
@@ -142,7 +142,7 @@ export function drawTunnels(g, v, T, vis, focus = -1) {
     for (let k = 0; k < idx.length - 1; k++) {
       const i = idx[k], j = idx[k + 1]; if (!near.has(i)) continue; any = true;
       const hi = T.hw[i] + 56, hj = T.hw[j] + 56; const P = (q, lat, z) => { const [x, y] = pt(T, q, lat); return [v.px(x, y, z), v.py(x, y, z)]; };
-      const cx = (T.x[i] + T.x[j]) / 2, cy = (T.y[i] + T.y[j]) / 2, camLat = (v.x - cx) * -T.ty[i] + (v.y - cy) * T.tx[i];
+      const cx = (T.x[i] + T.x[j]) / 2, cy = (T.y[i] + T.y[j]) / 2, camLat = (v.cx - cx) * -T.ty[i] + (v.cy - cy) * T.tx[i];
       if (camLat > hi) quad(side, P(i, hi, 0), P(j, hj, 0), P(j, hj, TUN_H * 0.8), P(i, hi, TUN_H * 0.8));
       if (camLat < -hi) quad(side, P(i, -hi, 0), P(j, -hj, 0), P(j, -hj, TUN_H * 0.8), P(i, -hi, TUN_H * 0.8));
       for (let q = 0; q < prof.length - 1; q++) { const l0 = prof[q][0], l1 = prof[q + 1][0], h0 = TUN_H * prof[q][1], h1 = TUN_H * prof[q + 1][1]; quad(paths[q], P(i, l0 * hi, h0), P(j, l0 * hj, h0), P(j, l1 * hj, h1), P(i, l1 * hi, h1)); }
@@ -156,7 +156,7 @@ export function drawTunnels(g, v, T, vis, focus = -1) {
     // portals (entrance faces the camera when approaching, exit when leaving)
     for (const [i, dir] of [[idx[0], -1], [idx[idx.length - 1], 1]]) {
       if (!near.has(i)) continue; const x = T.x[i], y = T.y[i], tx = T.tx[i] * dir, ty = T.ty[i] * dir;
-      if ((v.x - x) * tx + (v.y - y) * ty <= 0) continue; // camera behind the face
+      if ((v.cx - x) * tx + (v.cy - y) * ty <= 0) continue; // viewer behind the face
       const R = T.hw[i] + 56, Ho = T.hw[i] + 20; const P = (lat, h) => { const [px, py] = pt(T, i, lat); return [v.px(px + tx * 2, py + ty * 2, h), v.py(px + tx * 2, py + ty * 2, h)]; };
       g.fillStyle = shade(th.wall, 0.0); g.beginPath(); const a = [P(-R, 0), P(R, 0), P(R, TUN_H * 0.8), P(0.62 * R, TUN_H), P(-0.62 * R, TUN_H), P(-R, TUN_H * 0.8)]; a.forEach((q, n) => n ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.fill();
       g.strokeStyle = shade(th.wallTop, -0.1); g.lineWidth = 4 * v.zoom; g.stroke();

@@ -4,7 +4,8 @@ import { compileTrack, nearest, pointAt, VERGE, ELEV_T } from './tracks.js';
 import { Hazards } from './hazards.js';
 import { Peds } from './peds.js';
 import { Traffic } from './traffic.js';
-import { makeVis, drawWalls, drawDecks, drawDeckShadows, drawTunnels, LayerCache, slice } from './structures.js';
+import { makeVis, tunnelRuns, TUN_H } from './structures.js';
+import { DYNAMIC } from './ground.js';
 import { carStats, CAR_BY_ID, WEAPONS, DIFFICULTIES, AI_NAMES } from './cars.js';
 import { Ground, gridPos, makeMinimap } from './ground.js';
 import { View, drawProp, drawProp2Glow, drawItem, drawCar, drawProjectile, drawMine, Particles, glow } from './sprites.js';
@@ -32,7 +33,11 @@ function buildLayerInfo(T) {
   const underDeck = (x, y) => { const cx = Math.floor(x / cell), cy = Math.floor(y / cell); for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const l = grid.get((cx + a) + ',' + (cy + b)); if (l) for (const i of l) if (Math.hypot(T.x[i] - x, T.y[i] - y) < T.hw[i] + T.wl[i] + 8) return true; } return false; };
   const runId = new Int16Array(N).fill(-1); { let r = -1; for (let i = 0; i < N; i++) if (T.tn[i] && !T.tn[(i - 1 + N) % N]) { r++; for (let k = i; T.tn[k % N] && k < i + N; k++) runId[k % N] = r; } }
   const runOf = f => { for (let d = 0; d < 24; d++) { if (runId[(f + d) % N] >= 0) return runId[(f + d) % N]; if (runId[(f - d + N) % N] >= 0) return runId[(f - d + N) % N]; } return -1; };
-  return { elevNear, tnNear, tnDepth, underDeck, runOf };
+  // footprint of each tunnel hill (at ground and at the top of the hill) - the see-through window when you drive in
+  const polys = []; const runPoly = r => { if (polys[r]) return polys[r]; const idx = tunnelRuns(T)[r] || []; const L = [], R = [];
+    for (let k = 0; k < idx.length; k += 2) { const i = idx[k], w = T.hw[i] + 66; L.push([T.x[i] + T.ty[i] * w, T.y[i] - T.tx[i] * w]); R.push([T.x[i] - T.ty[i] * w, T.y[i] + T.tx[i] * w]); }
+    const ring = h => [...L.map(p => [p[0], p[1], h]), ...R.reverse().map(p => [p[0], p[1], h])]; R.reverse(); return (polys[r] = [ring(0), ring(TUN_H)]); };
+  return { elevNear, tnNear, tnDepth, underDeck, runOf, runPoly };
 }
 
 export class Game {
@@ -55,6 +60,7 @@ export class Game {
     this.camTarget = null; this.cam = { x: this.T.start.x, y: this.T.start.y };
     this.night = this.T.th.night; this.hudFlash = 0; this.ghost = opts.ghost || null; this.ghostRec = []; this.ghostRecT = 0; this.bestGhost = null;
     this.sortedProps = this.T.props.slice().sort((a, b) => a.y - b.y);
+    this.dynProps = this.T.props.filter(p => DYNAMIC.has(p.type)); this.glowProps = this.T.props.filter(p => p.type === 'lamp' || p.type === 'spire' || p.type === 'lava');
     this.hazards = (this.T.hazards.length || this.T.bomber) ? new Hazards(this) : null; this.warn = null;
     this.peds = new Peds(this);
     this.traffic = new Traffic(this); if (!this.traffic.active) this.traffic = null;
@@ -712,14 +718,14 @@ export class Game {
       this.ground.ensure(v.x - vw / 2 - 64 + Math.min(0, lx), v.y - vh / 2 - 64 + Math.min(0, ly), v.x + vw / 2 + 64 + Math.max(0, lx), v.y + vh / 2 + 64 + Math.max(0, ly), 1);
       this.frameN = (this.frameN || 0) + 1; if (this.frameN % 8 === 0) this.ground.flush(); // queued skid marks
       if (this.state === 'countdown') this.ground.prebake(14); else if (this.frameN % 8 === 4) this.ground.prebake(1); }
-    this.ground.draw(g, v.x - 0 + v.shakeX / v.zoom, v.y + v.shakeY / v.zoom, v.zoom, W, H);
+    this.ground.draw(g, v.x - v.shakeX / v.zoom, v.y - v.shakeY / v.zoom, v.zoom, W, H);
     if (T.ocean) this.ground.drawSea(g, v, this.time);
     mk && mk('ground');
     // night
     if (this.night) {
       g.fillStyle = 'rgba(4,6,22,0.55)'; g.fillRect(0, 0, W, H);
       g.globalCompositeOperation = 'lighter';
-      for (const p of this.T.props) if ((p.type === 'lamp' || p.type === 'spire' || p.type === 'lava') && v.visible(p.x, p.y, 200)) drawProp2Glow(g, v, p, this.time);
+      for (const p of this.glowProps) if (v.visible(p.x, p.y, 200)) drawProp2Glow(g, v, p, this.time);
       g.globalCompositeOperation = 'source-over';
     }
     // ---- layered scene: ground -> barriers -> ground-level objects -> raised decks -> objects on decks -> tunnel roofs
@@ -736,17 +742,12 @@ export class Game {
     if (this.hazards) this.hazards.drawGround(g, v, this.time);
     if (this.traffic) this.traffic.drawRoads(g, v, this.time);
     if (this.ghost && this.state === 'racing') this.drawGhost(g);
-    // barriers + flyover/tunnel shadows: one cached layer
-    if (!this.lc) this.lc = { low: new LayerCache(30, 3), deck: new LayerCache(36, 4), tun: new LayerCache(42, 2) }; // staggered so they rarely rebuild in the same frame
-    if (this.quality >= 1 || T.hasElev || T.hasTun) this.lc.low.draw(g, v, 'low', (cg, cv, p, n) => { const vv = makeVis(T, cv); if (p === 0 && (T.hasElev || T.hasTun)) drawDeckShadows(cg, cv, T, vv); if (this.quality >= 1) drawWalls(cg, cv, T, slice(vv, p, n)); });
     mk && mk('walls+haz');
     // pickups hover under the cars (cars drive over them, never under)
     for (const it of this.items) if (it.active && it.t !== 'boost' && it.t !== 'oil' && !high(it) && v.visible(it.x, it.y, 40)) drawItem(g, v, it, this.time);
     if (this.peds) this.peds.draw(g, v);
-    const list = [];
-    const P = this.sortedProps;
-    const lowQ = this.quality < 1; // lowest quality thins out small decorative scenery
-    for (let i = 0; i < P.length; i++) { const p = P[i]; if (lowQ && !p.w && p.v < 0.45 && p.type !== 'tyres' && p.type !== 'lamp') continue; if (v.visible(p.x, p.y, p.w ? 220 : 60)) list.push({ y: p.y + (p.type === 'dune' || p.type === 'lava' ? -200 : 0), k: 0, o: p }); }
+    const list = [], lowQ = this.quality < 1;
+    for (const p of this.dynProps) if (v.visible(p.x, p.y, 80)) list.push({ y: p.y - 200, k: 0, o: p }); // only animated scenery is drawn live; the rest is baked
     const vcars = this.cars.filter(c => !c.dead && v.visible(c.x, c.y, 60));
     for (const c of vcars) { c._L = inTun(c) ? 2 : onDeck(c) ? 1 : 0; if (c._L === 0) list.push({ y: c.y + 4, k: 2, o: c }); }
     if (this.hazards) this.hazards.collect(list, v);
@@ -755,21 +756,19 @@ export class Game {
     const carOpts = (c, alpha) => ({ night: this.night && !lowQ, alpha, tag: c !== this.human && this.mode !== 'attract', tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' });
     for (const e of list) { if (e.k === 0) drawProp(g, v, e.o, th, this.time); else if (e.k === 3) e.fn(g, v, this.time); else drawCar(g, v, e.o, this.time, carOpts(e.o)); }
     mk && mk('props+cars');
-    if (T.hasElev) {
-      this.lc.deck.draw(g, v, 'deck', (cg, cv, p, n) => drawDecks(cg, cv, T, makeVis(T, cv), p, n));
+    // baked scenery / flyovers / tunnel hills, drawn over ground-level cars; the tunnel you are in turns see-through
+    const ft = this.camTarget || this.human, focus = T.hasTun && ft && LI.tnNear[idx(ft)] ? idx(ft) : -1;
+    let holes = null; if (focus >= 0) { const r = LI.runOf(focus); if (r >= 0) { holes = new Path2D(); for (const ring of LI.runPoly(r)) ring.forEach(([x, y, h], k) => { const X = v.px(x, y, h), Y = v.py(x, y, h); k ? holes.lineTo(X, Y) : holes.moveTo(X, Y); }); holes.closePath(); } }
+    this.ground.drawOverlay(g, v.x - v.shakeX / v.zoom, v.y - v.shakeY / v.zoom, v.zoom, W, H, holes);
     mk && mk('decks');
-      // cars passing underneath a flyover show through it as a faint silhouette instead of vanishing
-      if (!lowQ) for (const c of vcars) { const t = c._L === 0 && LI.underDeck(c.x, c.y) ? 0.4 : 0; c.xA = (c.xA || 0) + (t - (c.xA || 0)) * Math.min(1, dt * 10); if (c.xA > 0.03) drawCar(g, v, c, this.time, carOpts(c, c.xA)); }
-    }
+    // cars passing underneath a flyover show through it as a faint silhouette instead of vanishing
+    if (T.hasElev && !lowQ) for (const c of vcars) { const t = c._L === 0 && LI.underDeck(c.x, c.y) ? 0.4 : 0; c.xA = (c.xA || 0) + (t - (c.xA || 0)) * Math.min(1, dt * 10); if (c.xA > 0.03) drawCar(g, v, c, this.time, carOpts(c, c.xA)); }
     // anything on a deck or airborne is drawn after the decks - on every map, not only ones with flyovers
     for (const it of this.items) if (high(it) && v.visible(it.x, it.y, 60)) { if (it.t === 'boost' || it.t === 'oil' || it.active) drawItem(g, v, it, this.time); }
     for (const m of this.mines) if (high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
     if (this.traffic) this.traffic.drawLayer(g, v, 1);
     vcars.filter(c => c._L === 1).sort((a, b) => (a.z * 1000 + a.y) - (b.z * 1000 + b.y)).forEach(c => drawCar(g, v, c, this.time, carOpts(c)));
     if (T.hasTun) {
-      const tg = this.camTarget || this.human;
-      const focus = tg && LI.tnNear[idx(tg)] ? idx(tg) : -1;
-      this.lc.tun.draw(g, v, 'tun' + (focus >= 0 ? LI.runOf(focus) : -1), (cg, cv, p, n) => drawTunnels(cg, cv, T, slice(makeVis(T, cv), p, n), focus));
       // everything underground is drawn over the hill (which is see-through when you're inside) so it never flickers out of sight
       for (const it of this.items) if ((it.active || it.t === 'boost' || it.t === 'oil') && it.tn && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
       if (this.traffic) this.traffic.drawLayer(g, v, 2);
@@ -816,8 +815,8 @@ export class Game {
       else if (kind === 'spray') { g.fillStyle = `rgba(255,255,255,${0.1 + p.z * 0.1})`; g.beginPath(); g.arc(X, Y, 2 * s, 0, TAU); g.fill(); }
     }
     // drifting cloud shadows (daytime): a few big soft blobs moving over the whole map
-    if (!this.night && th !== 'city') {
-      if (!this.clouds) { const r = mulberry32(T.seed ^ 0xc10d); this.clouds = []; const n = Math.max(4, Math.round(T.W * T.H / 4e6)); for (let i = 0; i < n; i++) this.clouds.push({ x: r() * T.W, y: r() * T.H, s: 500 + r() * 500, k: i % 2 }); }
+    if (!this.night && th !== 'city' && q >= 2) {
+      if (!this.clouds) { const r = mulberry32(T.seed ^ 0xc10d); this.clouds = []; const n = Math.max(4, Math.round(T.W * T.H / 4e6)); for (let i = 0; i < n; i++) this.clouds.push({ x: r() * T.W, y: r() * T.H, s: 380 + r() * 320, k: i % 2 }); }
       g.globalAlpha = th === 'snow' ? 0.1 : 0.14;
       for (const c of this.clouds) {
         c.x += 16 * dt; c.y += 5 * dt; if (c.x > T.W + c.s) c.x = -c.s; if (c.y > T.H + c.s) c.y = -c.s;
