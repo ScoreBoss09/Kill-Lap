@@ -12,6 +12,7 @@ import { View, drawCar } from './sprites.js';
 import { BUILTIN_TRACKS, TRACK_BY_ID } from './tracks.js';
 import { CARS, CAR_BY_ID, AI_NAMES, PAINTS, DIFFICULTIES, PERF_KEYS, carStats } from './cars.js';
 import { DRIVER_BY_NAME, DRIVERS } from './drivers.js';
+import Tex from './textures.js';
 import { UPGRADES } from './cars.js';
 import { avatarCell } from './ui.js';
 import { fmtTime, fmtMoney, clamp, hashStr, mulberry32 } from './util.js';
@@ -265,8 +266,8 @@ function loop(now) {
 }
 
 /* -------------------------------------------------------------- boot */
-function boot() {
-  resize(); const s = Store.s;
+async function boot() {
+  resize(); try { await Promise.race([Tex.load(), new Promise(r => setTimeout(r, 2500))]); } catch {} const s = Store.s;
   Input.setBinds(s.binds); Input.deadzone = s.deadzone; Input.sens = s.sens; Input.rumbleOn = s.rumble;
   UI.init(app);
   const start = () => { Audio.init(); Audio.setVolumes({ master: s.master, music: s.music, sfx: s.sfx }); if (app.state === 'menu') Audio.playMusic('menu'); };

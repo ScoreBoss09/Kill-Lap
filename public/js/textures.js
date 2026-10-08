@@ -1,0 +1,25 @@
+// Optional image textures: drop files into public/assets/textures/ (see the README there). Anything missing keeps the built-in procedural look.
+const T = { images: {}, patterns: {}, loaded: false };
+export default T;
+
+/** world size (px) that one texture tile covers - a car is about 40px long */
+const TILE = { ground: 512, road: 256, verge: 256 };
+const kind = name => name.split('_')[0];
+
+T.load = async function () {
+  let files = [];
+  try { const r = await fetch('/api/textures'); if (r.ok) files = (await r.json()).files || []; else throw 0; } catch { try { const r = await fetch('assets/textures/manifest.json'); if (r.ok) files = await r.json(); } catch {} }
+  await Promise.all(files.filter(f => /\.(png|jpe?g|webp)$/i.test(f)).map(f => new Promise(res => {
+    const img = new Image(); img.onload = () => { this.images[f.replace(/\.[^.]+$/, '').toLowerCase()] = img; res(); }; img.onerror = res; img.src = 'assets/textures/' + encodeURIComponent(f);
+  })));
+  this.loaded = true; if (Object.keys(this.images).length) console.log('[textures]', Object.keys(this.images).join(', '));
+};
+/** pattern for e.g. get('ground', 'desert') -> tries ground_desert, then ground */
+T.get = function (type, theme) {
+  const key = (theme && this.images[type + '_' + theme]) ? type + '_' + theme : this.images[type] ? type : null; if (!key) return null;
+  if (!this.patterns[key]) {
+    const img = this.images[key], c = document.createElement('canvas'); c.width = 4; c.height = 4; const p = c.getContext('2d').createPattern(img, 'repeat');
+    if (p && p.setTransform) p.setTransform(new DOMMatrix().scale((TILE[kind(key)] || 512) / img.width)); this.patterns[key] = p;
+  }
+  return this.patterns[key];
+};

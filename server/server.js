@@ -83,6 +83,11 @@ const server = http.createServer(async (req, res) => {
         let files = []; try { files = fs.readdirSync(dir).filter(f => AUDIO_EXT.test(f)); } catch {}
         return sendJSON(res, 200, { files });
       }
+      if (url.pathname === '/api/textures') {
+        const dir = path.join(PUB, 'assets', 'textures');
+        let files = []; try { files = fs.readdirSync(dir).filter(f => /\.(png|jpe?g|webp)$/i.test(f)); } catch {}
+        return sendJSON(res, 200, { files });
+      }
       if (url.pathname === '/api/leaderboard' && req.method === 'GET') {
         const id = url.searchParams.get('track');
         if (id) return sendJSON(res, 200, LB.tracks[id] || { laps: [], races: [] });

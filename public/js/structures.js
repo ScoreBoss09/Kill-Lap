@@ -44,38 +44,54 @@ export function drawDeckShadows(g, v, T, vis) {
   if (any) { g.fillStyle = 'rgba(0,0,0,0.3)'; g.fill(p); }
 }
 
-/** pillars first (so decks cover their tops), then deck segments from low to high */
+/** raised / banked road: earthworks on tall sections, pillars on low bridges, tilted surface, parapets. Drawn low-to-high. */
 export function drawDecks(g, v, T, vis) {
   const N = T.N, th = T.th, segs = [];
   for (const i of vis) { const j = (i + 1) % N; if (T.elev[i] || T.elev[j]) segs.push(i); }
   if (!segs.length) return;
   const conc = shade(th.wall, -0.1), concTop = shade(th.wallTop, 0.05);
-  for (const i of segs) if (i % 6 === 0 && T.z[i] >= 18) for (const s of [-0.55, 0.55]) { const [x, y] = pt(T, i, s * T.hw[i]); box(g, v, x, y, 15, 20, T.z[i] - DECK_T, T.ang[i], conc, concTop); }
+  for (const i of segs) if (i % 6 === 0 && T.z[i] >= 18 && T.z[i] < 60 && Math.abs(T.tilt[i]) < 10) for (const s of [-0.55, 0.55]) { const [x, y] = pt(T, i, s * T.hw[i]); box(g, v, x, y, 15, 20, T.z[i] - DECK_T, T.ang[i], conc, concTop); }
   segs.sort((a, b) => (T.z[a] + T.z[(a + 1) % N]) - (T.z[b] + T.z[(b + 1) % N]) || a - b);
   for (const i of segs) {
     const j = (i + 1) % N, zi = T.z[i], zj = T.z[j];
     const hi = T.hw[i], hj = T.hw[j], oi = hi + T.wl[i] + 11, oj = hj + T.wl[j] + 11;
-    const P = (k, lat, z) => { const [x, y] = pt(T, k, lat); return [v.px(x, y, z), v.py(x, y, z)]; };
-    const quad = (a, b, c, d, col) => { g.fillStyle = col; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath(); g.fill(); };
+    const zl = (k, lat, extra = 0) => T.z[k] - T.tilt[k] * clamp(lat / (2 * T.hw[k]), -0.65, 0.65) + extra; // tilted surface height at a lateral offset
+    const P = (k, lat, extra = 0) => { const [x, y] = pt(T, k, lat); const z = zl(k, lat, extra); return [v.px(x, y, z), v.py(x, y, z)]; };
+    const G = (k, lat) => { const [x, y] = pt(T, k, lat); return [v.px(x, y, 0), v.py(x, y, 0)]; };
+    const quad = (a, b, c, d, col) => { g.fillStyle = col; g.strokeStyle = col; g.lineWidth = 1.2; g.lineJoin = 'round'; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath(); g.fill(); g.stroke(); };
     const cx = (T.x[i] + T.x[j]) / 2, cy = (T.y[i] + T.y[j]) / 2, nx = -T.ty[i], ny = T.tx[i], camLat = (v.x - cx) * nx + (v.y - cy) * ny;
-    // outer side faces (visible when the camera is beside the deck)
-    if (camLat > oi) quad(P(i, oi, zi), P(j, oj, zj), P(j, oj, zj - DECK_T), P(i, oi, zi - DECK_T), shade(th.wall, -0.3));
-    if (camLat < -oi) quad(P(i, -oi, zi), P(j, -oj, zj), P(j, -oj, zj - DECK_T), P(i, -oi, zi - DECK_T), shade(th.wall, -0.3));
-    // deck surface: shoulders + road
-    quad(P(i, -oi, zi), P(j, -oj, zj), P(j, -hj, zj), P(i, -hi, zi), shade(th.wall, 0.05));
-    quad(P(i, hi, zi), P(j, hj, zj), P(j, oj, zj), P(i, oi, zi), shade(th.wall, 0.05));
-    quad(P(i, -hi, zi), P(j, -hj, zj), P(j, hj, zj), P(i, hi, zi), (i >> 3) & 1 ? th.road : shade(th.road, 0.03));
+    const jit = (((i * 2654435761) >>> 28) / 15 - 0.5) * 0.08;
+    if (Math.max(zi, zj) >= 40) { // mountain earthworks: rock shoulder sloping down to the valley floor
+      for (const s of [-1, 1]) {
+        const ri = clamp(zi * 0.55, 20, 150), rj = clamp(zj * 0.55, 20, 150), eI = s * oi, eJ = s * oj;
+        const mI = [pt(T, i, eI + s * ri * 0.4), zl(i, eI) * 0.6], mJ = [pt(T, j, eJ + s * rj * 0.4), zl(j, eJ) * 0.6];
+        const PM = (m) => [v.px(m[0][0], m[0][1], m[1]), v.py(m[0][0], m[0][1], m[1])];
+        quad(P(i, eI), P(j, eJ), PM(mJ), PM(mI), shade(th.wall, -0.2 + jit));
+        quad(PM(mI), PM(mJ), G(j, eJ + s * rj), G(i, eI + s * ri), shade(th.ground, -0.34 + jit));
+        // rock strata + shadowed foot make the climb read as solid ground
+        g.lineWidth = 1.4; g.strokeStyle = 'rgba(0,0,0,0.22)'; g.beginPath(); const a1 = PM(mI), b1 = PM(mJ); g.moveTo(a1[0], a1[1]); g.lineTo(b1[0], b1[1]);
+        const a2 = [(P(i, eI)[0] + a1[0]) / 2, (P(i, eI)[1] + a1[1]) / 2], b2 = [(P(j, eJ)[0] + b1[0]) / 2, (P(j, eJ)[1] + b1[1]) / 2]; g.moveTo(a2[0], a2[1]); g.lineTo(b2[0], b2[1]);
+        const f1 = G(i, eI + s * ri), f2 = G(j, eJ + s * rj); g.moveTo(f1[0], f1[1]); g.lineTo(f2[0], f2[1]); g.stroke();
+      }
+    } else {
+      if (camLat > oi) quad(P(i, oi), P(j, oj), P(j, oj, -DECK_T), P(i, oi, -DECK_T), shade(th.wall, -0.3));
+      if (camLat < -oi) quad(P(i, -oi), P(j, -oj), P(j, -oj, -DECK_T), P(i, -oi, -DECK_T), shade(th.wall, -0.3));
+    }
+    // road surface: shoulders + tilted tarmac
+    quad(P(i, -oi), P(j, -oj), P(j, -hj), P(i, -hi), shade(th.wall, 0.05));
+    quad(P(i, hi), P(j, hj), P(j, oj), P(i, oi), shade(th.wall, 0.05));
+    quad(P(i, -hi), P(j, -hj), P(j, hj), P(i, hi), (i >> 3) & 1 ? th.road : shade(th.road, 0.03));
     g.strokeStyle = th.line; g.globalAlpha = 0.8; g.lineWidth = Math.max(1, 3.2 * v.scale(zi)); g.beginPath();
-    for (const s of [-1, 1]) { const a = P(i, s * (hi - 9), zi), b = P(j, s * (hj - 9), zj); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); }
-    if (i % 4 < 2) { const a = P(i, 0, zi), b = P(j, 0, zj); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); }
+    for (const s of [-1, 1]) { const a = P(i, s * (hi - 9)), b = P(j, s * (hj - 9)); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); }
+    if (i % 4 < 2) { const a = P(i, 0), b = P(j, 0); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); }
     g.stroke(); g.globalAlpha = 1;
+    // kerb stripe on banked curves
+    if (Math.abs(T.tilt[i]) > 12) { const s = T.tilt[i] > 0 ? -1 : 1; g.strokeStyle = (i >> 1) & 1 ? '#d8302b' : '#f2f2f2'; g.lineWidth = Math.max(1.5, 5 * v.scale(zi)); g.beginPath(); const a = P(i, s * (hi - 3)), b = P(j, s * (hj - 3)); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); }
     // parapets (inner face + top)
     for (const s of [-1, 1]) {
       const li = s * (hi + T.wl[i] - 1), lj = s * (hj + T.wl[j] - 1);
-      const camSide = camLat * s > hi * 0.2; // inner face is visible when the camera is on the road side of the parapet
-      if (camLat * s < hi + T.wl[i] + 40) quad(P(i, li, zi), P(j, lj, zj), P(j, lj, zj + WALL_H), P(i, li, zi + WALL_H), (i >> 2) & 1 ? shade(th.wall, -0.2) : shade(th.wall, -0.32));
-      quad(P(i, li, zi + WALL_H), P(j, lj, zj + WALL_H), P(j, lj + s * 11, zj + WALL_H), P(i, li + s * 11, zi + WALL_H), (i >> 2) & 1 ? th.wallTop : shade(th.wallTop, -0.12));
-      void camSide;
+      if (camLat * s < hi + T.wl[i] + 40) quad(P(i, li), P(j, lj), P(j, lj, WALL_H), P(i, li, WALL_H), (i >> 2) & 1 ? shade(th.wall, -0.2) : shade(th.wall, -0.32));
+      quad(P(i, li, WALL_H), P(j, lj, WALL_H), P(j, lj + s * 11, WALL_H), P(i, li + s * 11, WALL_H), (i >> 2) & 1 ? th.wallTop : shade(th.wallTop, -0.12));
     }
   }
 }

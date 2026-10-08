@@ -15,7 +15,8 @@ export class Hazards {
     this.game = game; this.T = game.T; this.t = 0; this.peds = []; this.killed = new Set(); this.deadPeds = []; this.bombs = []; this.plane = null; this.runIdx = -1; this.warnText = null;
     this.list = this.T.hazards.map(h => {
       const o = { ...h, tx: Math.cos(h.a), ty: Math.sin(h.a) }; o.nx = -o.ty; o.ny = o.tx;
-      o.P = h.t === 'train' ? 36 + (h.seed % 9) : h.t === 'cross' ? 15 + (h.seed % 5) : h.t === 'lava' ? 10 + (h.seed % 5) : h.t === 'wave' ? 46 + (h.seed % 12) : 1;
+      if (h.t === 'train') { o.s0 = h.u0 - TRAIN_LEN - 60; o.s1 = h.u1 + 60; o.trans = (o.s1 - o.s0 + TRAIN_LEN) / TRAIN_SPEED; o.cr = h.cr.map(c => ({ ...c, arms: 0, warn: false })); }
+      o.P = h.t === 'train' ? Math.ceil(2 + o.trans + 12) + (h.seed % 7) : h.t === 'cross' ? 15 + (h.seed % 5) : h.t === 'lava' ? 10 + (h.seed % 5) : h.t === 'wave' ? 46 + (h.seed % 12) : 1;
       o.off = (h.seed % 13) * 1.7;
       if (h.t === 'lava') { const side = h.side || 1; o.x = h.x + o.nx * side * h.hw * 0.78; o.y = h.y + o.ny * side * h.hw * 0.78; o.r = 64; }
       if (h.t === 'jump' || h.t === 'ford') { o.dx = o.tx; o.dy = o.ty; }
@@ -43,7 +44,7 @@ export class Hazards {
     const g = this.game, T = this.T; this.t = g.state === 'racing' ? g.raceTime : 0; const t = this.t, cam = g.cam; let warn = null;
     const near = (x, y, r) => Math.hypot(x - cam.x, y - cam.y) < r;
     for (const h of this.list) {
-      if (h.t === 'train') { this.updateTrain(h, t, near, dt); const w = this.trainState(h, t); if (w.warn && near(h.x, h.y, 1500)) warn = warn || { text: 'TRAIN APPROACHING', c: '#ffb347' }; }
+      if (h.t === 'train') { this.updateTrain(h, t, near, dt); if (h.anyWarn && h.cr.some(c => c.warn && near(c.x, c.y, 1700))) warn = warn || { text: 'TRAIN APPROACHING', c: '#ffb347' }; }
       else if (h.t === 'cross') this.updatePeds(h, t, dt);
       else if (h.t === 'ford') this.updateFord(h);
       else if (h.t === 'jump') this.updateJump(h);
@@ -56,25 +57,26 @@ export class Hazards {
     g.warn = warn ? { ...warn, t: 0.3 } : null;
   }
 
-  /* ---------------------------------------------------------------- train */
+  /* ---------------------------------------------------------------- train: one railway spanning the whole map, a level crossing wherever it meets the road */
   trainState(h, t) {
-    const ph = (t + h.off) % h.P, k = Math.floor((t + h.off) / h.P);
-    const head = ph >= 7.5 ? -1500 + TRAIN_SPEED * (ph - 7.5) : null; const tail = head == null ? null : head - TRAIN_LEN;
-    const active = head != null && tail < 1000;
-    return { ph, k, head, tail, active, warn: ph >= 3 && ph < 12.8 && (active || ph < 7.5 + 4), arms: ph >= 4 && ph < 12.4 ? clamp(Math.min(ph - 4, 12.4 - ph) * 1.4, 0, 1) : 0 };
+    const ph = (t + h.off) % h.P, head = ph >= 2 ? h.s0 + TRAIN_SPEED * (ph - 2) : null, tail = head == null ? null : head - TRAIN_LEN;
+    return { ph, head, tail, active: head != null && tail < h.s1 };
   }
   updateTrain(h, t, near, dt) {
-    const s = this.trainState(h, t), g = this.game; h.s = s;
-    if (s.warn) { const b = Math.floor(s.ph * 2); if (b !== h.lastBell) { h.lastBell = b; if (near(h.x, h.y, 1400)) g.snd('bell', h.x, h.y, 0.8); } }
-    if (s.head != null && !h.horned && s.head > -1300) { h.horned = true; if (near(h.x, h.y, 2200)) g.snd('horn', h.x, h.y, 1); }
-    if (s.ph < 2) h.horned = false;
-    if (!s.active) return;
-    const dx = h.nx, dy = h.ny; // rail direction runs across the road
-    for (const c of g.cars) {
+    const s = this.trainState(h, t), g = this.game; h.s = s; let anyWarn = false;
+    for (const c of h.cr) { // every crossing warns on its own schedule: lights + bell as the train approaches, arms down until it has passed
+      const arrive = 2 + (c.u - h.s0) / TRAIN_SPEED, clear = arrive + (TRAIN_LEN + 120) / TRAIN_SPEED;
+      c.warn = s.ph >= arrive - 6 && s.ph < clear + 1.2; c.arms = s.ph >= arrive - 5 && s.ph < clear + 0.6 ? clamp(Math.min(s.ph - (arrive - 5), clear + 0.6 - s.ph) * 1.4, 0, 1) : 0; anyWarn = anyWarn || c.warn;
+      if (c.warn) { const b = Math.floor(s.ph * 2); if (b !== c.lastBell) { c.lastBell = b; if (near(c.x, c.y, 1400)) g.snd('bell', c.x, c.y, 0.8); } }
+      if (s.head != null && !c.horned && s.head > c.u - 1500 && s.head < c.u) { c.horned = true; if (near(c.x, c.y, 2400)) g.snd('horn', c.x, c.y, 1); }
+      if (s.ph < 2) c.horned = false;
+    }
+    h.anyWarn = anyWarn; if (!s.active) return;
+    for (const c of g.cars) { // the train hits anything on the rails, anywhere on the map
       if (!c.local || c.dead || (c.z || 0) > 12) continue;
-      const rx = c.x - h.x, ry = c.y - h.y, u = rx * dx + ry * dy, w = rx * h.tx + ry * h.ty;
-      if (Math.abs(w) < 26 && u < s.head + 14 && u > s.tail - 14) { // hit by the train
-        g.damage(c, 140, null, 'train'); const sp = 650; c.vx = dx * sp + h.tx * (Math.random() - 0.5) * 100; c.vy = dy * sp + h.ty * (Math.random() - 0.5) * 100; c.w += (Math.random() - 0.5) * 12; c.invuln = 0;
+      const rx = c.x - h.x, ry = c.y - h.y, u = rx * h.rx + ry * h.ry, w = -rx * h.ry + ry * h.rx;
+      if (Math.abs(w) < 26 && u < s.head + 14 && u > s.tail - 14) {
+        g.damage(c, 140, null, 'train'); const sp = 650; c.vx = h.rx * sp + (Math.random() - 0.5) * 100; c.vy = h.ry * sp + (Math.random() - 0.5) * 100; c.w += (Math.random() - 0.5) * 12; c.invuln = 0;
         g.fx.explosion(c.x, c.y, 0.9); g.snd('crash', c.x, c.y, 1); g.feedAdd(c.name + ' was hit by the train!', '#ff8a6a');
         if (c.human) { g.stats.trainHits = (g.stats.trainHits || 0) + 1; g.shake = 14; Input.rumble(1, 1, 300); }
       }
@@ -113,7 +115,8 @@ export class Hazards {
     const g = this.game;
     for (const c of g.cars) {
       if (!c.local || c.dead || c.zAir > 2) continue; const rx = c.x - h.x, ry = c.y - h.y, u = rx * h.tx + ry * h.ty, w = rx * h.nx + ry * h.ny;
-      if (Math.abs(u) < 74 && Math.abs(w) < h.hw * 0.98) {
+      if (Math.abs(u) < 76 && Math.abs(w) < h.hw + 6) {
+        if (c.human && !g.seenFord) { g.seenFord = true; g.msg('WATER - SLOWS YOU DOWN', 1.6, '#7fd0ff'); }
         if (!(c.waterT > 0)) { g.snd('splash', c.x, c.y, 0.7); for (let k = 0; k < 8; k++) g.fx.smoke(c.x, c.y, (Math.random() - 0.5) * 160, (Math.random() - 0.5) * 160, 6, 0.6, '170,210,240', 0.5); }
         c.waterT = 0.18; if (Math.random() < 0.6) g.fx.smoke(c.x - Math.cos(c.a) * 12, c.y - Math.sin(c.a) * 12, (Math.random() - 0.5) * 120, (Math.random() - 0.5) * 120, 5, 0.5, '190,225,250', 0.55);
       }
@@ -178,7 +181,7 @@ export class Hazards {
   /* ---------------------------------------------------------------- AI hooks */
   /** true if a bot should hold (stop short of a crossing with a train coming) */
   holdFor(c) {
-    for (const h of this.list) if (h.t === 'train' && h.s && h.s.warn) { const d = (h.f - c.pos + this.T.N) % this.T.N; if (d > 1 && d < 34) return true; }
+    for (const h of this.list) if (h.t === 'train' && h.cr) for (const x of h.cr) if (x.warn) { const d = (x.f - c.pos + this.T.N) % this.T.N; if (d > 1 && d < 34) return true; }
     return false;
   }
   slowFor(c) { for (const h of this.list) if (h.t === 'cross' && h.peds && h.peds.length) { const d = (h.f - c.pos + this.T.N) % this.T.N; if (d > 0 && d < 24) return true; } return false; }
@@ -186,8 +189,9 @@ export class Hazards {
   /* ---------------------------------------------------------------- drawing: ground level */
   drawGround(g, v, time) {
     for (const h of this.list) {
-      if (!v.visible(h.x, h.y, h.t === 'train' || h.t === 'wave' ? 1400 : 220)) continue;
-      if (h.t === 'train') this.drawRails(g, v, h, time); else if (h.t === 'cross') this.drawCrosswalk(g, v, h); else if (h.t === 'ford') this.drawFord(g, v, h, time);
+      if (h.t === 'train') { this.drawRails(g, v, h, time); continue; }
+      if (!v.visible(h.x, h.y, h.t === 'wave' ? 1400 : 220)) continue;
+      if (false) 0; else if (h.t === 'cross') this.drawCrosswalk(g, v, h); else if (h.t === 'ford') this.drawFord(g, v, h, time);
       else if (h.t === 'lava') this.drawLavaGlow(g, v, h, time); else if (h.t === 'wave') this.drawWave(g, v, h, time);
     }
     if (this.hasBomber) this.drawBombMarkers(g, v, time);
@@ -195,14 +199,20 @@ export class Hazards {
     for (const p of this.deadPeds) if (v.visible(p.x, p.y, 40)) this.drawPed(g, v, p, 0, true);
   }
   drawRails(g, v, h, time) {
-    const R = h.hw + VERGE + 520, d = (u, w) => [v.sx(h.x + h.nx * u + h.tx * w), v.sy(h.y + h.ny * u + h.ty * w)];
-    g.fillStyle = 'rgba(52,48,44,0.92)'; g.beginPath(); for (const [u, w] of [[-R, -34], [R, -34], [R, 34], [-R, 34]]) { const [x, y] = d(u, w); g.lineTo(x, y); } g.closePath(); g.fill();
-    g.strokeStyle = '#5a3d26'; g.lineWidth = 5 * v.zoom; g.beginPath(); for (let u = -R; u <= R; u += 17) { const a = d(u, -30), b = d(u, 30); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); } g.stroke();
-    g.strokeStyle = '#c9ced6'; g.lineWidth = 3 * v.zoom; g.beginPath(); for (const w of [-14, 14]) { const a = d(-R, w), b = d(R, w); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); } g.stroke();
-    g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1 * v.zoom; g.beginPath(); for (const w of [-15, 13]) { const a = d(-R, w), b = d(R, w); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); } g.stroke();
-    // road planks + hazard stripes either side of the crossing
-    const hw = h.hw; g.fillStyle = 'rgba(70,64,58,0.9)'; g.beginPath(); for (const [u, w] of [[-hw - 4, -40], [hw + 4, -40], [hw + 4, 40], [-hw - 4, 40]]) { const [x, y] = d(u, w); g.lineTo(x, y); } g.closePath(); g.fill();
-    g.strokeStyle = '#f2c500'; g.lineWidth = 3 * v.zoom; g.setLineDash([9 * v.zoom, 9 * v.zoom]); for (const w of [-46, 46]) { g.beginPath(); const a = d(-hw, w), b = d(hw, w); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); } g.setLineDash([]);
+    // the railway runs across the whole map; only the part near the view is drawn
+    const cam = this.game.cam, R = Math.hypot(v.W, v.H) / v.zoom / 2 + 260, wc = -(cam.x - h.x) * h.ry + (cam.y - h.y) * h.rx; if (Math.abs(wc) > R) return;
+    const uc = (cam.x - h.x) * h.rx + (cam.y - h.y) * h.ry, ua = Math.max(h.u0, uc - R), ub = Math.min(h.u1, uc + R); if (ub <= ua) return;
+    const d = (u, w) => [v.sx(h.x + h.rx * u - h.ry * w), v.sy(h.y + h.ry * u + h.rx * w)];
+    g.fillStyle = 'rgba(52,48,44,0.92)'; g.beginPath(); for (const [u, w] of [[ua, -34], [ub, -34], [ub, 34], [ua, 34]]) { const [x, y] = d(u, w); g.lineTo(x, y); } g.closePath(); g.fill();
+    g.strokeStyle = '#5a3d26'; g.lineWidth = 5 * v.zoom; g.beginPath(); for (let u = Math.ceil(ua / 17) * 17; u <= ub; u += 17) { const a = d(u, -30), b = d(u, 30); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); } g.stroke();
+    g.strokeStyle = '#c9ced6'; g.lineWidth = 3 * v.zoom; g.beginPath(); for (const w of [-14, 14]) { const a = d(ua, w), b = d(ub, w); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); } g.stroke();
+    g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1 * v.zoom; g.beginPath(); for (const w of [-15, 13]) { const a = d(ua, w), b = d(ub, w); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); } g.stroke();
+    // road planks + hazard stripes at every crossing
+    for (const c of h.cr) {
+      if (c.u < ua - 200 || c.u > ub + 200) continue; const cosA = Math.max(0.35, Math.abs(h.rx * c.nx + h.ry * c.ny)), half = Math.min(c.hw * 2, (c.hw + 4) / cosA);
+      g.fillStyle = 'rgba(70,64,58,0.9)'; g.beginPath(); for (const [u, w] of [[c.u - half, -40], [c.u + half, -40], [c.u + half, 40], [c.u - half, 40]]) { const [x, y] = d(u, w); g.lineTo(x, y); } g.closePath(); g.fill();
+      g.strokeStyle = '#f2c500'; g.lineWidth = 3 * v.zoom; g.setLineDash([9 * v.zoom, 9 * v.zoom]); for (const w of [-46, 46]) { g.beginPath(); const a = d(c.u - half, w), b = d(c.u + half, w); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); } g.setLineDash([]);
+    }
   }
   drawCrosswalk(g, v, h) {
     const d = (lat, a) => [v.sx(h.x + h.nx * lat + h.tx * a), v.sy(h.y + h.ny * lat + h.ty * a)];
@@ -211,11 +221,19 @@ export class Hazards {
     g.strokeStyle = 'rgba(245,245,245,0.8)'; g.lineWidth = 5 * v.zoom; for (const a of [-46, 46]) { g.beginPath(); const p = d(-h.hw, a), q = d(h.hw, a); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke(); }
   }
   drawFord(g, v, h, time) {
+    // a shallow water crossing running edge to edge, with foam where you drive in and out
     const X = v.sx(h.x), Y = v.sy(h.y); g.save(); g.translate(X, Y); g.rotate(h.a); g.scale(v.zoom, v.zoom);
-    const rx = 80, ry = h.hw * 0.98; const gr = g.createRadialGradient(0, 0, 8, 0, 0, ry); gr.addColorStop(0, 'rgba(70,140,200,0.72)'); gr.addColorStop(0.8, 'rgba(60,125,185,0.6)'); gr.addColorStop(1, 'rgba(110,170,215,0.0)');
-    g.fillStyle = gr; g.beginPath(); g.ellipse(0, 0, rx, ry, 0, 0, TAU); g.fill();
-    g.strokeStyle = 'rgba(235,248,255,0.55)'; g.lineWidth = 1.6; for (let k = 0; k < 4; k++) { const f = ((time * 0.6 + k * 0.25) % 1); g.globalAlpha = 1 - f; g.beginPath(); g.ellipse(0, 0, rx * (0.3 + f * 0.7), ry * (0.3 + f * 0.7), 0, 0, TAU); g.stroke(); } g.globalAlpha = 1;
-    g.fillStyle = 'rgba(255,255,255,0.25)'; g.beginPath(); g.ellipse(-20, -ry * 0.3, 26, 7, 0.3, 0, TAU); g.fill(); g.restore();
+    const L = 78, Wd = h.hw + 6; const gr = g.createLinearGradient(0, -Wd, 0, Wd); gr.addColorStop(0, 'rgba(60,130,190,0.15)'); gr.addColorStop(0.12, 'rgba(60,135,195,0.7)'); gr.addColorStop(0.88, 'rgba(60,135,195,0.7)'); gr.addColorStop(1, 'rgba(60,130,190,0.15)');
+    g.fillStyle = gr; g.beginPath(); g.roundRect(-L, -Wd, L * 2, Wd * 2, 18); g.fill();
+    g.strokeStyle = 'rgba(235,248,255,0.5)'; g.lineWidth = 1.6; for (let k = 0; k < 5; k++) { g.beginPath(); for (let y = -Wd + 6; y <= Wd - 6; y += 6) { const x = -L + 14 + ((time * 22 + k * 32) % (L * 2 - 28)) + Math.sin(y * 0.09 + time * 3) * 4; y === -Wd + 6 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke(); }
+    g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 4; g.lineJoin = 'round'; for (const sx of [-L, L]) { g.beginPath(); for (let y = -Wd + 8; y <= Wd - 8; y += 6) { const x = sx + Math.sin(y * 0.2 + time * 5) * 3; y === -Wd + 8 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke(); }
+    g.fillStyle = 'rgba(255,255,255,0.22)'; g.beginPath(); g.ellipse(-24, -Wd * 0.35, 30, 6, 0.2, 0, TAU); g.fill(); g.restore();
+  }
+  drawWarnSign(g, v, x, y, sym) {
+    const X = v.px(x, y, 34), Y = v.py(x, y, 34), z = v.zoom;
+    g.strokeStyle = '#3a3d44'; g.lineWidth = 3 * z; g.beginPath(); g.moveTo(v.px(x, y, 0), v.py(x, y, 0)); g.lineTo(X, Y + 6 * z); g.stroke();
+    g.save(); g.translate(X, Y - 4 * z); g.scale(z, z); g.fillStyle = '#f2c500'; g.strokeStyle = '#111'; g.lineWidth = 2.2; g.beginPath(); g.moveTo(0, -13); g.lineTo(12, 9); g.lineTo(-12, 9); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#111'; g.font = 'bold 13px Arial'; g.textAlign = 'center'; g.fillText(sym, 0, 7); g.restore();
   }
   drawLavaGlow(g, v, h, time) {
     const st = h.st || 0, X = v.sx(h.x), Y = v.sy(h.y), r = (st === 2 ? 130 : st === 1 ? 90 : 60) * v.zoom; g.save(); g.globalCompositeOperation = 'lighter';
@@ -244,10 +262,11 @@ export class Hazards {
   /* ---------------------------------------------------------------- tall objects: added to the depth-sorted list */
   collect(list, v) {
     for (const h of this.list) {
+      if (h.t === 'train') { for (const c of h.cr) { if (!v.visible(c.x, c.y, 260)) continue; c.s = { warn: c.warn, arms: c.arms }; for (const s of [-1, 1]) { const py = c.y + c.ty * s * 34 + c.ny * s * (c.hw + 24); list.push({ y: py + 6, k: 3, fn: (g, vv, t) => this.drawSignal(g, vv, c, s, t) }); } } continue; }
       if (!v.visible(h.x, h.y, 260)) continue;
-      if (h.t === 'train') { for (const s of [-1, 1]) { const px = h.x + h.nx * 0 + h.tx * (s * (h.hw + 38)), py = h.y + h.ty * (s * (h.hw + 38)); list.push({ y: py + h.ny * s * (h.hw + 24) + 6, k: 3, fn: (g, vv, t) => this.drawSignal(g, vv, h, s, t) }); } }
-      else if (h.t === 'cross') { for (const s of [-1, 1]) list.push({ y: h.y + h.nx * s * (h.hw + 30) * 0 + h.ny * s * (h.hw + 34), k: 3, fn: (g, vv, t) => this.drawPedLight(g, vv, h, s, t) }); for (const p of h.peds || []) list.push({ y: p.y, k: 3, fn: (g, vv, t) => this.drawPed(g, vv, p, t, false) }); }
+      if (h.t === 'cross') { for (const s of [-1, 1]) list.push({ y: h.y + h.ny * s * (h.hw + 34), k: 3, fn: (g, vv, t) => this.drawPedLight(g, vv, h, s, t) }); for (const p of h.peds || []) list.push({ y: p.y, k: 3, fn: (g, vv, t) => this.drawPed(g, vv, p, t, false) }); }
       else if (h.t === 'jump') list.push({ y: h.y + 20, k: 3, fn: (g, vv) => this.drawRamp(g, vv, h) });
+      else if (h.t === 'ford') { for (const sd of [-1, 1]) { const px = h.x + h.tx * -105 + h.nx * sd * (h.hw + 26), py = h.y + h.ty * -105 + h.ny * sd * (h.hw + 26); list.push({ y: py, k: 3, fn: (g, vv) => this.drawWarnSign(g, vv, px, py, '≈') }); } }
     }
   }
   drawSignal(g, v, h, s, t) {
@@ -298,7 +317,7 @@ export class Hazards {
 
   /* ---------------------------------------------------------------- drawing: above everything (train, plane, falling bombs) */
   drawTop(g, v, time) {
-    for (const h of this.list) if (h.t === 'train' && h.s && h.s.active && v.visible(h.x, h.y, 1500)) this.drawTrain(g, v, h);
+    for (const h of this.list) if (h.t === 'train' && h.s && h.s.active) this.drawTrain(g, v, h);
     if (this.hasBomber) this.drawPlane(g, v, time);
     for (const h of this.list) if (h.t === 'lava' && (h.st || 0) === 2 && v.visible(h.x, h.y, 200)) { const X = v.px(h.x, h.y, 50), Y = v.py(h.x, h.y, 50); g.save(); g.globalCompositeOperation = 'lighter'; const gr = g.createRadialGradient(X, Y, 0, X, Y, 70 * v.zoom); gr.addColorStop(0, 'rgba(255,230,120,0.65)'); gr.addColorStop(1, 'rgba(255,90,20,0)'); g.fillStyle = gr; g.beginPath(); g.arc(X, Y, 70 * v.zoom, 0, TAU); g.fill(); g.restore(); }
   }

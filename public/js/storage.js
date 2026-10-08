@@ -11,7 +11,9 @@ const DEFAULTS = () => ({
 let data = null;
 function load() {
   const d = DEFAULTS();
-  try { const raw = localStorage.getItem(KEY); if (raw) { const j = JSON.parse(raw); Object.assign(d, j); d.settings = Object.assign(DEFAULTS().settings, j.settings || {}); d.stats = Object.assign(DEFAULTS().stats, j.stats || {}); } } catch {}
+  try { const raw = localStorage.getItem(KEY); if (raw) { const j = JSON.parse(raw); Object.assign(d, j); d.settings = Object.assign(DEFAULTS().settings, j.settings || {}); d.stats = Object.assign(DEFAULTS().stats, j.stats || {}); d.career = Object.assign({ done: {}, active: null, final: {} }, j.career || {}); } } catch {}
+  // saves from older versions may lack newer fields
+  d.career.done ||= {}; d.career.final ||= {}; d.upg ||= {}; d.owned = d.owned && d.owned.length ? d.owned : ['scrapper']; d.customTracks ||= {}; d.records ||= {}; d.ghosts ||= {}; d.achievements ||= {}; d.paints ||= {};
   return d;
 }
 const Store = {

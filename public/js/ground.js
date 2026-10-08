@@ -3,6 +3,7 @@
 // are stamped straight into the tiles.
 import { VERGE, pointAt } from './tracks.js';
 import { mulberry32, shade, rgba, TAU, hashStr } from './util.js';
+import Tex from './textures.js';
 
 export const TS = 512;
 const noiseCache = {};
@@ -121,16 +122,19 @@ export class Ground {
         g.fillStyle = gr; g.fillRect(bx - br, by - br, br * 2, br * 2);
       }
     }
+    { const gt = Tex.get('ground', T.theme); if (gt) { g.globalAlpha = 0.92; g.fillStyle = gt; g.fillRect(ox, oy, TS, TS); g.globalAlpha = 1; } }
     if (q >= 1) { g.fillStyle = noisePattern(g, 'light'); g.fillRect(ox, oy, TS, TS); g.fillStyle = noisePattern(g, 'dark'); g.fillRect(ox, oy, TS, TS); }
     this.terrainFeatures(g, ox, oy, C);
     // verge
     this.ringPath(g, 0, 'v'); g.fillStyle = th.verge; g.fill(this.fillRule);
+    { const vt = Tex.get('verge', T.theme); if (vt) { g.globalAlpha = 0.9; g.fillStyle = vt; g.fill(this.fillRule); g.globalAlpha = 1; } }
     if (q >= 1) { g.fillStyle = noisePattern(g, 'dark'); g.fill(this.fillRule); }
     // soft shoulder fade
     g.save(); g.lineJoin = 'round'; g.globalAlpha = 0.35; g.strokeStyle = th.ground2; g.lineWidth = 6; g.beginPath(); this.edge(g, 1, 'v'); this.edge(g, -1, 'v'); g.stroke(); g.restore();
     // tarmac
     this.ringPath(g, 0, 0); g.fillStyle = th.road; g.fill(this.fillRule);
     g.save(); this.ringPath(g, 0, 0); g.clip(this.fillRule);
+    { const rt = Tex.get('road', T.theme); if (rt) { g.globalAlpha = 0.95; g.fillStyle = rt; g.fillRect(ox, oy, TS, TS); g.globalAlpha = 1; } }
     if (q >= 1) { g.fillStyle = noisePattern(g, 'dark'); g.fillRect(ox, oy, TS, TS); g.fillStyle = noisePattern(g, 'light'); g.fillRect(ox, oy, TS, TS); g.fillStyle = noisePattern(g, 'grit'); g.fillRect(ox, oy, TS, TS); }
     // patches + wear
     const R = 200;

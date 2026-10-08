@@ -50,8 +50,8 @@ Keyboard bindings can be changed in *Controls*. Gamepad dead-zone, steering sens
   * *Equipment* (**earned by finishing career series**): front / rear / wheel **spikes** (Rookie Cup), roof **auto-turret** and **rear guard** that shoots down rockets from behind (Pro Circuit), **homing missiles** and **cluster bombs** (Elite League). Everything you fit is drawn on your car.
 * **Weapons are locked on the first lap** for everyone. The rocket is unguided; homing missiles are the guided option.
 * **Rivals with personalities** - 16 named drivers with portraits, bios and driving styles (aggressive, precise, defensive...). A "Meet the field" screen shows who you're racing.
-* **Track hazards** - level crossings with a **train** that flattens anything in its way, a **pedestrian crossing** in the city, **water fords**, **jump ramps**, erupting **lava vents**, a **tidal wave** sweeping the coast road, and an **air raid** in the Warzone where a bomber drops bombs (marked on the road a moment before they land).
-* **Raised roads** - flyovers where the track crosses over itself, tunnels through hills, and real 3D barriers.
+* **Track hazards** - a **railway that runs right across the map** with a train that flattens anything in its way, and a working level crossing (signals, barriers, bell) everywhere the line meets the road, a **pedestrian crossing** in the city, **water fords**, **jump ramps**, erupting **lava vents**, a **tidal wave** sweeping the coast road, and an **air raid** in the Warzone where a bomber drops bombs (marked on the road a moment before they land).
+* **Raised roads, banking and mountains** - flyovers where the track crosses over itself, tunnels through hills, real 3D barriers, **banked curves** (the road surface tilts and the outer edge rises) and two **mountain maps** (Alpine Ascent, Red Summit) where switchback roads climb higher and higher up a mountain. Climbs slow you down and descents speed you up.
 * **Time Trial** - chase your **ghost**; your best lap is saved per track.
 * **Daily Challenge** - a new generated track every day, one global leaderboard.
 * **Multiplayer** - lobby, rooms (with optional password), chat, ready-up, host settings (track, laps, AI bots, upgrades on/off, weapons on/off), up to 12 racers.
@@ -113,6 +113,10 @@ The game works with **no audio files** - everything is synthesised live (engine 
 
 Anything you do not provide keeps using the built-in synth. See `public/assets/audio/README.md`.
 
+## Textures
+
+The game draws everything procedurally, but you can drop your own seamless top-down images into `public/assets/textures/` (ground per theme, road, verge). See the README in that folder for the exact names and free CC0 sources (ambientCG, Poly Haven, Kenney).
+
 ## Project layout
 
 ```
@@ -121,7 +125,7 @@ public/index.html       the game page
 public/css/style.css    menu styling
 public/js/main.js       app shell: main loop, race lifecycle, career, rewards
 public/js/game.js       race simulation: physics, weapons, AI, laps, pickups, net sync, world rendering
-public/js/tracks.js     track format, spline compiler, collision queries, scenery, 21 built-in maps, generator
+public/js/tracks.js     track format, spline compiler, collision queries, scenery, 23 built-in maps, generator
 public/js/ground.js     lazily baked terrain tiles (road, kerbs, decals), minimap
 public/js/structures.js 3D barriers, raised decks, pillars, tunnels
 public/js/hazards.js    trains, pedestrians, fords, ramps, lava, tidal wave, bomber
@@ -133,6 +137,7 @@ public/js/editor.js     map editor
 public/js/audio.js      synthesised SFX, engines and procedural music (+ file overrides)
 public/js/input.js      keyboard / gamepad input and rumble
 public/js/storage.js    profile, settings, career, achievements (localStorage)
+public/js/textures.js   optional image textures
 public/js/net.js        WebSocket client + REST helpers
 tools/                  dev tools: track validator, headless smoke/flow/multiplayer tests, audio renderer
 ```

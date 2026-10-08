@@ -208,12 +208,14 @@ export const Editor = {
       cycle('Laps', [1, 2, 3, 4, 5, 6, 8, 10].map(v => ({ v, t: String(v) })), t.laps || 3, v => { t.laps = v; this.dirty = true; }),
       slider('Scenery density', 0, 2, 0.1, t.dens == null ? THEMES[t.theme].dens : t.dens, v => { t.dens = v; this.dirty = true; }, v => v.toFixed(1) + 'x'),
       toggle('Auto-placed pickups', t.auto !== false, v => { t.auto = v; this.dirty = true; }),
-      toggle('Auto hazards (trains, wave...)', t.hazards !== false, v => { t.hazards = v; this.dirty = true; }));
+      toggle('Auto hazards (trains, wave...)', t.hazards !== false, v => { t.hazards = v; this.dirty = true; }),
+      toggle('Bank every corner', !!t.bank, v => { t.bank = v; this.dirty = true; this.recompile(); }));
     if (this.tool === 'points') {
       if (this.sel >= 0 && t.pts[this.sel]) { const pt = t.pts[this.sel]; p.append(h('div', { class: 'panel' }, h('b', null, 'Point ' + (this.sel + 1)), slider('Width here', 90, 300, 10, pt[2] || t.width, v => { this.snapshot(); pt[2] = v; this.recompile(); }, v => v + ' px'),
-        slider('Road height', 0, 110, 10, pt[3] || 0, v => { this.snapshot(); pt[2] = pt[2] ?? null; pt[3] = v; this.recompile(); }, v => (v ? v + ' (raised)' : 'ground')),
+        slider('Road height', 0, 400, 10, pt[3] || 0, v => { this.snapshot(); pt[2] = pt[2] ?? null; pt[3] = v; this.recompile(); }, v => (v ? v + (v > 150 ? ' (mountain)' : ' (raised)') : 'ground')),
+        toggle('Banked curve here', !!pt[5], v => { this.snapshot(); pt[2] = pt[2] ?? null; pt[3] = pt[3] || 0; pt[4] = pt[4] || 0; pt[5] = v ? 1 : 0; this.recompile(); }),
         toggle('Tunnel here', !!pt[4], v => { this.snapshot(); pt[2] = pt[2] ?? null; pt[3] = pt[3] || 0; pt[4] = v ? 1 : 0; this.recompile(); }),
-        btn('Reset point', () => { this.snapshot(); pt.length = 2; this.recompile(); this.buildPanel(); }, 'mini ghost'), h('div', { class: 'small' }, 'Raise 2+ neighbouring points to build a flyover. Where roads cross, one must be 50+ higher.'))); }
+        btn('Reset point', () => { this.snapshot(); pt.length = 2; this.recompile(); this.buildPanel(); }, 'mini ghost'), h('div', { class: 'small' }, 'Raise neighbouring points to build a flyover; keep raising them one after another to climb a mountain (up to 400). Where roads cross, one must be 50+ higher.'))); }
       p.append(btn('REVERSE DIRECTION', () => { this.snapshot(); t.pts.reverse(); this.recompile(); }, 'mini ghost'), btn('SCALE ×1.15', () => { this.snapshot(); const cx = this.cam.x, cy = this.cam.y; t.pts.forEach(q => { q[0] = Math.round(cx + (q[0] - cx) * 1.15); q[1] = Math.round(cy + (q[1] - cy) * 1.15); }); this.recompile(); }, 'mini ghost'), btn('SCALE ×0.87', () => { this.snapshot(); const cx = this.cam.x, cy = this.cam.y; t.pts.forEach(q => { q[0] = Math.round(cx + (q[0] - cx) * 0.87); q[1] = Math.round(cy + (q[1] - cy) * 0.87); }); this.recompile(); }, 'mini ghost'), btn('SUBDIVIDE (more points)', () => {
         const P = t.pts, n = P.length; if (n > 60) { UI.toast('Already plenty of points', 'bad'); return; } this.snapshot(); const out = [];
         for (let i = 0; i < n; i++) { const a = P[(i - 1 + n) % n], b = P[i], c = P[(i + 1) % n], d = P[(i + 2) % n]; out.push(b); out.push([Math.round(catmull(a[0], b[0], c[0], d[0], 0.5)), Math.round(catmull(a[1], b[1], c[1], d[1], 0.5))]); }

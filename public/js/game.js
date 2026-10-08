@@ -122,7 +122,9 @@ export class Game {
     let vf = c.vx * cs + c.vy * sn;
     const vf0 = vf;
     const nr = nearest(T, c.x, c.y, c.pos);
-    c.pos = nr.f; c.lat = nr.lat; c.zRoad = nr.z; c.z = nr.z + (c.zAir || 0); const alat = Math.abs(nr.lat), off = alat > nr.hw;
+    c.pos = nr.f; c.lat = nr.lat; c.zRoad = nr.zl; c.z = nr.zl + (c.zAir || 0); const alat = Math.abs(nr.lat), off = alat > nr.hw;
+    // road grade slows climbs and speeds descents; a banked road pulls you towards its low (inside) edge and gives extra grip
+    { const along = c.vx * T.tx[nr.i] + c.vy * T.ty[nr.i]; vf -= T.grade[nr.i] * (along >= 0 ? 1 : -1) * 620 * dt; const slope = nr.tilt / (2 * nr.hw); if (Math.abs(slope) > 0.01 && !((c.zAir || 0) > 1)) { c.vx += nr.nx * slope * 380 * dt; c.vy += nr.ny * slope * 380 * dt; } c.bankGrip = 1 + Math.min(0.3, Math.abs(nr.tilt) / 200); }
     c.surface = off ? 'grass' : 'road';
     let thr = racing || this.state === 'countdown' ? inp.throttle : 0, brk = racing ? inp.brake : (this.state === 'countdown' ? 0 : inp.brake);
     if (air) { thr = 0; brk = 0; }
@@ -157,7 +159,7 @@ export class Game {
     // the car slide when it is turned hard, overloaded by nitro, on grass, on oil, or on the handbrake).
     const cs2 = Math.cos(c.a), sn2 = Math.sin(c.a);
     let vf2 = c.vx * cs2 + c.vy * sn2 + (vf - vf0), vl = -c.vx * sn2 + c.vy * cs2;
-    const G = 1000 * st.grip * (inp.hb ? 0.3 : 1) * (off ? 0.7 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.92 : 1) * (air ? 0 : 1) * (c.waterT > 0 ? 0.55 : 1);
+    const G = 1000 * st.grip * (inp.hb ? 0.3 : 1) * (off ? 0.7 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.92 : 1) * (air ? 0 : 1) * (c.waterT > 0 ? 0.55 : 1) * (c.bankGrip || 1);
     if (c.waterT > 0 && !air) vf2 -= vf2 * 1.15 * dt;
     const dv = clamp(-vl * 9, -G, G) * dt;
     vl += Math.abs(dv) > Math.abs(vl) ? -vl : dv;
@@ -361,7 +363,7 @@ export class Game {
     for (const it of this.items) {
       const dx = it.x - c.x, dy = it.y - c.y; if (Math.abs((it.z || 0) - (c.z || 0)) > 30) continue;
       if (it.t === 'boost') { if (dx * dx + dy * dy < 34 * 34 && c.boostT < 0.3) { c.boostT = 0.9; this.snd('boost', it.x, it.y, 0.8); if (c.human) this.hudFlash = 0.2; } continue; }
-      if (it.t === 'oil') { if (dx * dx + dy * dy < 34 * 34 && c.oilT < 0.2 && c.nitroT <= 0) { c.oilT = 1.3; c.w += (Math.random() - 0.5) * 4; this.snd('oil', it.x, it.y, 0.6); } continue; }
+      if (it.t === 'oil') { if (dx * dx + dy * dy < 34 * 34 && c.oilT < 0.2 && c.nitroT <= 0) { c.oilT = 1.3; c.w += (Math.random() - 0.5) * 4; this.snd('oil', it.x, it.y, 0.6); if (c.human && !this.seenOil) { this.seenOil = true; this.msg('OIL - NO GRIP', 1.5, '#ffb347'); } } continue; }
       if (!it.active || dx * dx + dy * dy > PICKUP_R * PICKUP_R) continue;
       if (it.t !== 'repair' || c.hp < c.maxHp) { if (it.t === 'ammo' && !this.weapons) continue; }
       else if (it.t === 'repair') continue;
@@ -627,7 +629,7 @@ export class Game {
     c.x += (c.tx - c.x) * k; c.y += (c.ty - c.y) * k; c.a += angDiff(c.a, c.ta) * k;
     if (Math.hypot(c.tx - c.x, c.ty - c.y) > 300) { c.x = c.tx; c.y = c.ty; }
     c.invuln = c.invuln; c.ping += dt;
-    const nr = nearest(this.T, c.x, c.y, c.pos < 0 ? -1 : c.pos, 40); c.pos = nr.f; c.lat = nr.lat; c.zRoad = nr.z; c.zAir = Math.max(0, (c.tz || 0) - nr.z); c.z = nr.z + c.zAir;
+    const nr = nearest(this.T, c.x, c.y, c.pos < 0 ? -1 : c.pos, 40); c.pos = nr.f; c.lat = nr.lat; c.zRoad = nr.zl; c.zAir = Math.max(0, (c.tz || 0) - nr.zl); c.z = nr.zl + c.zAir;
     const sp = Math.hypot(c.vx, c.vy); if (c.nitroOn && this.quality > 0) this.fx.fire(c.x - Math.cos(c.a) * c.len * 0.5, c.y - Math.sin(c.a) * c.len * 0.5, 0, 0, 7, 0.25);
     const hpf = c.hp / (c.maxHp || 1); if (hpf < 0.4 && Math.random() < 0.3 && !c.dead) this.fx.smoke(c.x, c.y, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20 - 10, 8, 1, '70,70,70', 0.5);
     if (c.slip > 95 && Math.random() < 0.4 && !c.dead) this.fx.smoke(c.x, c.y, 0, 0, 6, 0.5, '210,210,210', 0.25);
@@ -661,7 +663,7 @@ export class Game {
     const tx = tg.x + tg.vx * look, ty = tg.y + tg.vy * look; const k = Math.min(1, 5 * dt);
     this.cam.x += (tx - this.cam.x) * k; this.cam.y += (ty - this.cam.y) * k;
     if (Math.hypot(tx - this.cam.x, ty - this.cam.y) > 900) { this.cam.x = tx; this.cam.y = ty; }
-    const baseZoom = H / (this.settings.zoomH || 780); const zt = baseZoom * (1 - 0.13 * clamp(sp / 500, 0, 1));
+    const baseZoom = H / (this.settings.zoomH || 780); const zt = baseZoom * (1 - 0.13 * clamp(sp / 500, 0, 1)) / (1 + (tg.zRoad || 0) * 0.0008);
     v.zoom += (zt - v.zoom) * Math.min(1, 2 * dt) || zt; if (!v.zoom) v.zoom = zt;
     v.x = this.cam.x; v.y = this.cam.y;
     const sh = this.shake; v.shakeX = (Math.random() - 0.5) * sh * v.zoom * 2; v.shakeY = (Math.random() - 0.5) * sh * v.zoom * 2;
@@ -698,13 +700,11 @@ export class Game {
       else { const c = e.o; drawCar(g, v, c, this.time, { night: this.night, tag: c !== this.human && this.mode !== 'attract', tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' }); }
     };
     for (const e of list) drawEntry(e);
-    if (T.hasElev) {
-      drawDecks(g, v, T, vis);
-      for (const it of this.items) if (high(it) && v.visible(it.x, it.y, 60)) { if (it.t === 'boost' || it.t === 'oil' || it.active) drawItem(g, v, it, this.time); }
-      for (const m of this.mines) if (high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
-      const top = []; for (const c of this.cars) if (!c.dead && high(c) && v.visible(c.x, c.y, 60)) top.push({ y: c.z * 1000 + c.y, k: 2, o: c });
-      top.sort((a, b) => a.y - b.y); for (const e of top) drawEntry(e);
-    }
+    if (T.hasElev) drawDecks(g, v, T, vis);
+    // anything high up (on a deck, or airborne off a jump) is drawn after the decks - on every map, not only ones with flyovers
+    for (const it of this.items) if (high(it) && v.visible(it.x, it.y, 60)) { if (it.t === 'boost' || it.t === 'oil' || it.active) drawItem(g, v, it, this.time); }
+    for (const m of this.mines) if (high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
+    { const top = []; for (const c of this.cars) if (!c.dead && high(c) && v.visible(c.x, c.y, 60)) top.push({ y: c.z * 1000 + c.y, k: 2, o: c }); top.sort((a, b) => a.y - b.y); for (const e of top) drawEntry(e); }
     if (T.hasTun) drawTunnels(g, v, T, vis);
     if (this.hazards) this.hazards.drawTop(g, v, this.time);
     this.drawGantry(g);

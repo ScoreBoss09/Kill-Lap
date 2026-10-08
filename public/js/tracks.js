@@ -5,6 +5,7 @@ export const STEP = 14;      // centre-line sample spacing (px)
 export const VERGE = 46;     // grass/dirt shoulder between the tarmac and the barrier
 export const MARGIN = 360;   // world padding around the track
 export const ELEV_T = 6;     // road height above which a sample is drawn as a raised deck instead of baked on the ground
+export const BANK_K = 24000, BANK_MAX = 64, BANK_LIFT = 14; // banking: tilt (height difference across the road) per unit curvature, its limit, and the gentle lift curves get
 export const BRIDGE_WALL = 14, TUN_WALL = 22; // barrier offset from the road edge on decks / in tunnels
 
 export const THEMES = {
@@ -36,9 +37,29 @@ function finish(id, name, theme, pts, o) {
     for (let i = a; i <= b; i++) { const p = pts[((i % n) + n) % n]; p[2] = p[2] ?? null; p[3] = Z; }
     for (const [i, f] of [[a - 1, 0.45], [b + 1, 0.45]]) { const p = pts[((i % n) + n) % n]; if (!p[3]) { p[2] = p[2] ?? null; p[3] = Z * f; } }
   }
+  for (const [a, b, Z] of o.climb || []) for (let i = a; i <= b; i++) { const p = pts[((i % n) + n) % n], t = (i - a) / (b - a); p[2] = p[2] ?? null; p[3] = Math.max(p[3] || 0, Math.round(Z * Math.pow(Math.sin(Math.PI * t), 0.9))); }
+  for (const [a, b] of o.banked || []) for (let i = a; i <= b; i++) { const p = pts[((i % n) + n) % n]; p[2] = p[2] ?? null; p[3] = p[3] || 0; p[4] = p[4] || 0; p[5] = 1; }
   for (const [a, b] of o.tun || []) for (let i = a; i <= b; i++) { const p = pts[((i % n) + n) % n]; p[2] = p[2] ?? null; p[3] = p[3] || 0; p[4] = 1; }
-  return { id, name, theme, pts, width: o.width || 150, laps: o.laps || 3, seed: o.seed || hashStr(id), author: 'Kill Lap', dens: o.dens, wv: o.wv, builtin: true, diff: o.diff || 2, bomber: !!o.bomber, tags: o.tags };
+  return { id, name, theme, pts, width: o.width || 150, laps: o.laps || 3, seed: o.seed || hashStr(id), author: 'Kill Lap', dens: o.dens, wv: o.wv, builtin: true, diff: o.diff || 2, bomber: !!o.bomber, tags: o.tags, bank: !!o.bank };
 }
+
+/** a mountain: flat start, switchbacks climbing to a summit, then a long banked descent back down to the start */
+function mountain(id, name, theme, o = {}) {
+  const R = o.R || 300, W = o.legW || 1400, legs = o.legs || 4, Z = o.Z || 260, m = o.mirror ? -1 : 1, x0 = 1200, pts = [], P = (x, y, z = 0, b = 1) => pts.push([Math.round(x * m), Math.round(y), null, Math.round(z), 0, b]);
+  P(0, 0, 0, 0); P(600, 0, 0, 0); P(x0, 0, 0, 0);
+  const climb = []; // collect climbing points first, then assign heights by progress
+  for (let l = 0; l < legs; l++) {
+    const east = l % 2 === 0, y = l * 2 * R, xa = east ? x0 : x0 + W, xb = east ? x0 + W : x0;
+    for (let k = 1; k <= 3; k++) climb.push([xa + (xb - xa) * k / 4, y]);
+    if (l < legs - 1) { const cx = xb, cy = y + R, sgn = east ? 1 : -1; for (let a = 0.25; a <= 1.0001; a += 0.25) { const th = Math.PI * a; climb.push([cx + sgn * R * Math.sin(th), cy - R * Math.cos(th)]); } }
+  }
+  const K = climb.length; climb.forEach(([x, y], k) => P(x, y, Z * Math.pow((k + 1) / K, 0.95)));
+  const last = climb[K - 1], ret = o.ret || [[-1, 0.9], [-0.55, 0.7]]; // the return leg swings round the mountain, descending all the way
+  const yEnd = last[1], pts2 = [[x0 - 450, yEnd + 130, 0.78], [x0 - 1150, yEnd - 180, 0.55], [-650, yEnd * 0.62, 0.34], [-760, yEnd * 0.28, 0.16], [-420, 140, 0.05]];
+  for (const [x, y, f] of pts2) P(x, y, Z * f);
+  return finish(id, name, theme, pts, { width: o.width || 150, laps: 3, seed: o.seed, diff: o.diff || 4, bank: true, tags: ['mountain', 'banked'], bomber: o.bomber });
+}
+
 /** figure-of-eight with a flyover where the two halves cross */
 function figure8(id, name, theme, o) {
   const n = o.n || 30, pts = [];
@@ -56,25 +77,27 @@ export const BUILTIN_TRACKS = [
   loop('dustbowl', 'Dust Bowl', 'desert', { rx: 1900, ry: 1250, h: [[2, 0.08, 0.4], [3, 0.1, 1.2], [5, 0.04, 2]], width: 170, diff: 1, seed: 11 }),
   loop('pinewood', 'Pinewood Run', 'forest', { rx: 1850, ry: 1300, h: [[3, 0.12, 0], [2, 0.1, 2.2], [6, 0.03, 1]], n: 30, width: 160, diff: 1, seed: 21 }),
   pts('frostbite', 'Frostbite Pass', 'snow', [[0, 0], [700, -120], [1400, 120], [2100, -60], [2800, 200], [3200, 800], [2900, 1400], [2300, 1500], [1900, 1050], [1400, 1250], [1500, 1850], [2100, 2200], [1500, 2600], [700, 2400], [200, 1900], [500, 1300], [100, 800]], { width: 150, diff: 2 }),
-  loop('neon', 'Neon Nights', 'city', { rx: 1800, ry: 1100, h: [[2, 0.18, 0.3], [4, 0.09, 1.6], [7, 0.025, 0.5]], n: 32, width: 150, diff: 2, seed: 31 }),
+  loop('neon', 'Neon Nights', 'city', { bank: true, rx: 1800, ry: 1100, h: [[2, 0.18, 0.3], [4, 0.09, 1.6], [7, 0.025, 0.5]], n: 32, width: 150, diff: 2, seed: 31 }),
   pts('foundry', 'The Foundry', 'industrial', [[0, 0], [800, 0], [1500, -200], [2300, 0], [2900, 450], [2800, 1100], [2100, 1300], [1800, 1800], [2300, 2300], [1700, 2800], [900, 2650], [500, 2100], [900, 1650], [400, 1250], [-200, 900], [-300, 400]], { width: 150, diff: 2 }),
-  loop('inferno', 'Inferno Ring', 'volcano', { rx: 1700, ry: 1500, h: [[3, 0.14, 0.6], [5, 0.08, 0], [2, 0.12, 2.8]], n: 34, width: 150, diff: 3, seed: 41 }),
+  loop('inferno', 'Inferno Ring', 'volcano', { bank: true, rx: 1700, ry: 1500, h: [[3, 0.14, 0.6], [5, 0.08, 0], [2, 0.12, 2.8]], n: 34, width: 150, diff: 3, seed: 41 }),
   pts('seaside', 'Seaside Sprint', 'coast', [[0, 600], [500, 150], [1300, 100], [2100, 350], [2900, 250], [3500, 650], [3600, 1250], [3100, 1700], [2400, 1600], [1900, 1950], [2200, 2500], [1600, 2800], [800, 2600], [300, 2000], [500, 1400]], { width: 170, diff: 1 }),
-  loop('canyon', 'Canyon Carnage', 'mesa', { rx: 2000, ry: 1200, h: [[2, 0.2, 1], [4, 0.1, 0.2], [7, 0.035, 2.5]], n: 36, width: 145, diff: 3, seed: 51 }),
+  loop('canyon', 'Canyon Carnage', 'mesa', { bank: true, rx: 2000, ry: 1200, h: [[2, 0.2, 1], [4, 0.1, 0.2], [7, 0.035, 2.5]], n: 36, width: 145, diff: 3, seed: 51 }),
   pts('serpent', 'Serpent', 'desert', [[600, 500], [1300, 380], [2000, 520], [2700, 420], [3300, 700], [3500, 1300], [3100, 1700], [2550, 1550], [2100, 1850], [2250, 2300], [2800, 2550], [3000, 2850], [2400, 3050], [1600, 2800], [1000, 3000], [500, 2600], [700, 2000], [1300, 1700], [900, 1300], [400, 1000]], { width: 150, diff: 3 }),
-  loop('timberline', 'Timberline Twist', 'forest', { rx: 1700, ry: 1450, h: [[5, 0.12, 0.3], [3, 0.13, 2], [2, 0.08, 1]], n: 40, width: 145, diff: 3, seed: 61 }),
-  loop('glacier', 'Glacier Gauntlet', 'snow', { rx: 2100, ry: 1100, h: [[4, 0.14, 1.1], [3, 0.1, 0], [6, 0.04, 2]], n: 36, width: 150, diff: 2, seed: 71 }),
+  loop('timberline', 'Timberline Twist', 'forest', { bank: true, rx: 1700, ry: 1450, h: [[5, 0.12, 0.3], [3, 0.13, 2], [2, 0.08, 1]], n: 40, width: 145, diff: 3, seed: 61 }),
+  loop('glacier', 'Glacier Gauntlet', 'snow', { bank: true, rx: 2100, ry: 1100, h: [[4, 0.14, 1.1], [3, 0.1, 0], [6, 0.04, 2]], n: 36, width: 150, diff: 2, seed: 71 }),
   loop('midnight', 'Midnight Docks', 'industrial', { rx: 1750, ry: 1400, h: [[2, 0.16, 2.4], [5, 0.1, 1.1], [3, 0.07, 0.4]], n: 34, width: 150, diff: 2, seed: 81 }),
-  loop('kingpin', 'Kingpin Circuit', 'city', { rx: 2100, ry: 1500, h: [[3, 0.11, 0.5], [5, 0.09, 2.2], [8, 0.02, 1]], n: 40, width: 155, diff: 4, seed: 91 }),
-  loop('lavaflow', 'Lava Flow', 'volcano', { rx: 2200, ry: 1250, h: [[2, 0.14, 0.2], [4, 0.1, 2.1], [6, 0.05, 0.9]], n: 38, width: 150, diff: 3, seed: 101 }),
+  loop('kingpin', 'Kingpin Circuit', 'city', { bank: true, rx: 2100, ry: 1500, h: [[3, 0.11, 0.5], [5, 0.09, 2.2], [8, 0.02, 1]], n: 40, width: 155, diff: 4, seed: 91 }),
+  loop('lavaflow', 'Lava Flow', 'volcano', { bank: true, rx: 2200, ry: 1250, h: [[2, 0.14, 0.2], [4, 0.1, 2.1], [6, 0.05, 0.9]], n: 38, width: 150, diff: 3, seed: 101 }),
   // ---- tracks with raised roads, crossovers, tunnels and hazards
-  figure8('overpass', 'Overpass Chaos', 'city', { A: 1750, B: 1560, n: 30, width: 150, diff: 3, seed: 111, bridge: 72, tags: ['flyover'] }),
-  figure8('crossfire', 'Crossfire', 'warzone', { A: 1850, B: 1500, n: 30, width: 155, diff: 3, seed: 121, bridge: 70, bomber: true, tags: ['flyover', 'air raid'] }),
+  figure8('overpass', 'Overpass Chaos', 'city', { bank: true, A: 1750, B: 1560, n: 30, width: 150, diff: 3, seed: 111, bridge: 72, tags: ['flyover'] }),
+  figure8('crossfire', 'Crossfire', 'warzone', { bank: true, A: 1850, B: 1500, n: 30, width: 155, diff: 3, seed: 121, bridge: 70, bomber: true, tags: ['flyover', 'air raid'] }),
   loop('tunnelvision', 'Tunnel Vision', 'mesa', { rx: 2050, ry: 1280, h: [[2, 0.14, 0.6], [3, 0.1, 2.0], [5, 0.04, 1]], n: 36, width: 150, diff: 3, seed: 131, tun: [[4, 8], [22, 25]], tags: ['tunnels'] }),
-  loop('skyline', 'Skyline Highway', 'city', { rx: 1900, ry: 1350, h: [[3, 0.11, 0.2], [5, 0.07, 1.5], [2, 0.1, 2.5]], n: 38, width: 160, diff: 3, seed: 141, elev: [[3, 9, 74], [24, 29, 74]], tun: [[16, 18]], tags: ['raised', 'tunnel'] }),
+  loop('skyline', 'Skyline Highway', 'city', { bank: true, rx: 1900, ry: 1350, h: [[3, 0.11, 0.2], [5, 0.07, 1.5], [2, 0.1, 2.5]], n: 38, width: 160, diff: 3, seed: 141, elev: [[3, 9, 74], [24, 29, 74]], tun: [[16, 18]], tags: ['raised', 'tunnel'] }),
   loop('groundzero', 'Ground Zero', 'warzone', { rx: 1800, ry: 1300, h: [[3, 0.12, 0.9], [2, 0.1, 2.2], [6, 0.03, 0.5]], n: 34, width: 150, diff: 3, seed: 151, bomber: true, tags: ['air raid'] }),
   figure8('foundrycross', 'Foundry Crossing', 'industrial', { A: 1800, B: 1480, n: 30, width: 150, diff: 2, seed: 161, bridge: 66, wob: 0.06, tags: ['flyover', 'trains'] }),
-  loop('moltenpass', 'Molten Pass', 'volcano', { rx: 2000, ry: 1250, h: [[2, 0.13, 1.2], [4, 0.1, 0.4], [7, 0.03, 2]], n: 36, width: 150, diff: 4, seed: 171, elev: [[12, 17, 70]], tun: [[26, 29]], tags: ['raised', 'tunnel', 'lava'] }),
+  mountain('alpine', 'Alpine Ascent', 'snow', { Z: 260, legs: 4, R: 300, seed: 181 }),
+  mountain('redsummit', 'Red Summit', 'mesa', { Z: 320, legs: 4, R: 330, legW: 1500, mirror: true, seed: 191 }),
+  loop('moltenpass', 'Molten Pass', 'volcano', { bank: true, rx: 2000, ry: 1250, h: [[2, 0.13, 1.2], [4, 0.1, 0.4], [7, 0.03, 2]], n: 36, width: 150, diff: 4, seed: 171, elev: [[12, 17, 70]], tun: [[26, 29]], tags: ['raised', 'tunnel', 'lava'] }),
 ];
 export const TRACK_BY_ID = Object.fromEntries(BUILTIN_TRACKS.map(t => [t.id, t]));
 
@@ -105,8 +128,8 @@ export function compileTrack(data, opts = {}) {
   const baseW = data.width || 150;
   const wAt = i => (P[i][2] != null ? P[i][2] : baseW);
   // dense sampling
-  const dx = [], dy = [], dw = [], dz = [], dtn = [];
-  const zP = i => P[i][3] || 0, tP = i => (P[i][4] ? 1 : 0);
+  const dx = [], dy = [], dw = [], dz = [], dtn = [], dbk = [];
+  const zP = i => P[i][3] || 0, tP = i => (P[i][4] ? 1 : 0), bP = i => (P[i][5] ? 1 : 0);
   const sub = 20;
   for (let i = 0; i < n; i++) {
     const a = P[(i - 1 + n) % n], b = P[i], c = P[(i + 1) % n], d = P[(i + 2) % n];
@@ -115,21 +138,21 @@ export function compileTrack(data, opts = {}) {
       dx.push(catmull(a[0], b[0], c[0], d[0], t)); dy.push(catmull(a[1], b[1], c[1], d[1], t));
       dw.push(catmull(wAt((i - 1 + n) % n), wAt(i), wAt((i + 1) % n), wAt((i + 2) % n), t));
       const i0 = (i - 1 + n) % n, i2 = (i + 1) % n, i3 = (i + 2) % n;
-      dz.push(Math.max(0, catmull(zP(i0), zP(i), zP(i2), zP(i3), t))); dtn.push(tP(i) + (tP(i2) - tP(i)) * t);
+      dz.push(Math.max(0, catmull(zP(i0), zP(i), zP(i2), zP(i3), t))); dtn.push(tP(i) + (tP(i2) - tP(i)) * t); dbk.push(bP(i) + (bP(i2) - bP(i)) * t);
     }
   }
   const M = dx.length; const cum = new Float64Array(M + 1);
   for (let i = 0; i < M; i++) cum[i + 1] = cum[i] + Math.hypot(dx[(i + 1) % M] - dx[i], dy[(i + 1) % M] - dy[i]);
   const total = cum[M];
   const N = Math.max(40, Math.round(total / STEP)); const step = total / N;
-  const x = new Float32Array(N), y = new Float32Array(N), hw = new Float32Array(N), z = new Float32Array(N), tn = new Uint8Array(N);
+  const x = new Float32Array(N), y = new Float32Array(N), hw = new Float32Array(N), z = new Float32Array(N), tn = new Uint8Array(N), bkf = new Float32Array(N);
   let j = 0;
   for (let i = 0; i < N; i++) {
     const s = i * step;
     while (j < M - 1 && cum[j + 1] < s) j++;
     const seg = cum[j + 1] - cum[j] || 1, f = clamp((s - cum[j]) / seg, 0, 1), k = (j + 1) % M;
     x[i] = dx[j] + (dx[k] - dx[j]) * f; y[i] = dy[j] + (dy[k] - dy[j]) * f; hw[i] = (dw[j] + (dw[k] - dw[j]) * f) / 2;
-    z[i] = dz[j] + (dz[k] - dz[j]) * f; tn[i] = dtn[j] + (dtn[k] - dtn[j]) * f > 0.5 ? 1 : 0;
+    z[i] = dz[j] + (dz[k] - dz[j]) * f; tn[i] = dtn[j] + (dtn[k] - dtn[j]) * f > 0.5 ? 1 : 0; bkf[i] = dbk[j] + (dbk[k] - dbk[j]) * f;
   }
   // keep the start/finish straight flat and on the ground
   for (let i = -16; i <= 16; i++) { const q = ((i % N) + N) % N, f = Math.abs(i) / 16; z[q] *= f * f * (3 - 2 * f); if (Math.abs(i) < 10) tn[q] = 0; }
@@ -155,6 +178,12 @@ export function compileTrack(data, opts = {}) {
   for (let i = 0; i < N; i++) { let s = 0; for (let k = -3; k <= 3; k++) s += curv[(i + k + N) % N]; sm[i] = s / 7; }
   curv.set(sm);
 
+  // banking: tilt the road across its width on curves (outer edge higher) and lift banked curves gently off the ground
+  const flatW = new Float32Array(N).fill(1); for (let i = -16; i <= 16; i++) { const q = ((i % N) + N) % N, f = Math.abs(i) / 16; flatW[q] = f * f * (3 - 2 * f); }
+  const bAmt = new Float32Array(N), tilt = new Float32Array(N), grade = new Float32Array(N); const allBank = !!data.bank;
+  for (let i = 0; i < N; i++) { let a = 0; for (let k = -10; k <= 10; k++) a += allBank ? 1 : bkf[(i + k + N) % N]; bAmt[i] = a / 21; }
+  for (let i = 0; i < N; i++) { tilt[i] = bAmt[i] * clamp(curv[i] * BANK_K, -BANK_MAX, BANK_MAX) * flatW[i]; z[i] += BANK_LIFT * clamp(Math.abs(tilt[i]) / 24, 0, 1); }
+  for (let i = 0; i < N; i++) grade[i] = (z[(i + 1) % N] - z[(i - 1 + N) % N]) / (2 * step);
   // barrier offset per sample: wide grass verge on the ground, tight parapets on decks and in tunnels
   const tnS = new Float32Array(N); for (let i = 0; i < N; i++) { let a = 0; for (let k = -8; k <= 8; k++) a += tn[(i + k + N) % N]; tnS[i] = a / 17; }
   const wl = new Float32Array(N), elev = new Uint8Array(N); let hasElev = false, hasTun = false;
@@ -163,7 +192,7 @@ export function compileTrack(data, opts = {}) {
     elev[i] = z[i] >= ELEV_T ? 1 : 0; if (elev[i]) hasElev = true; if (tn[i]) hasTun = true;
   }
   const T = {
-    z, tn, wl, elev, hasElev, hasTun, hazards: [], bomber: false,
+    z, tn, wl, elev, hasElev, hasTun, tilt, grade, hazards: [], bomber: false,
     data, id: data.id, name: data.name, theme: data.theme in THEMES ? data.theme : 'desert', th: null, N, step, length: total, x, y, hw, tx, ty, ang, curv, W, H, ox, oy,
     laps: data.laps || 3, seed: data.seed || hashStr(data.id || 'x'), start: null, props: [], items: [],
   };
@@ -197,14 +226,14 @@ export function nearest(T, px, py, hint = -1, win = 36, out = _near) {
   const tx = T.tx[bi], ty = T.ty[bi]; // right normal = (-ty, tx) with y pointing down
   out.i = bi; out.f = bi + bt; out.px = cx; out.py = cy; out.nx = -ty; out.ny = tx;
   out.lat = (px - cx) * out.nx + (py - cy) * out.ny; out.d = Math.sqrt(bd);
-  out.hw = T.hw[bi] + (T.hw[j] - T.hw[bi]) * bt; out.wl = T.wl[bi] + (T.wl[j] - T.wl[bi]) * bt; out.z = T.z[bi] + (T.z[j] - T.z[bi]) * bt;
+  out.hw = T.hw[bi] + (T.hw[j] - T.hw[bi]) * bt; out.wl = T.wl[bi] + (T.wl[j] - T.wl[bi]) * bt; out.z = T.z[bi] + (T.z[j] - T.z[bi]) * bt; out.tilt = T.tilt[bi] + (T.tilt[j] - T.tilt[bi]) * bt; out.zl = out.z - out.tilt * clamp(out.lat / (2 * out.hw), -0.6, 0.6);
   return out;
 }
 export function pointAt(T, f, lat = 0) {
   f = ((f % T.N) + T.N) % T.N; const i = Math.floor(f), j = (i + 1) % T.N, t = f - i;
   const cx = T.x[i] + (T.x[j] - T.x[i]) * t, cy = T.y[i] + (T.y[j] - T.y[i]) * t;
   const tx = T.tx[i] + (T.tx[j] - T.tx[i]) * t, ty = T.ty[i] + (T.ty[j] - T.ty[i]) * t; const l = Math.hypot(tx, ty) || 1;
-  return { x: cx - (ty / l) * lat, y: cy + (tx / l) * lat, a: Math.atan2(ty, tx), hw: T.hw[i], z: T.z[i] + (T.z[j] - T.z[i]) * t };
+  return { x: cx - (ty / l) * lat, y: cy + (tx / l) * lat, a: Math.atan2(ty, tx), hw: T.hw[i], z: T.z[i] + (T.z[j] - T.z[i]) * t - (T.tilt[i] + (T.tilt[j] - T.tilt[i]) * t) * clamp(lat / (2 * T.hw[i]), -0.6, 0.6) };
 }
 /** road height at fractional sample index */
 export function zAt(T, f) { f = ((f % T.N) + T.N) % T.N; const i = Math.floor(f), j = (i + 1) % T.N; return T.z[i] + (T.z[j] - T.z[i]) * (f - i); }
@@ -254,29 +283,47 @@ function placeItems(T, custom) {
 
 /* ------------------------------------------------------------------ hazards */
 export const HAZ_TYPES = ['train', 'cross', 'ford', 'jump', 'lava', 'wave', 'bomber'];
-const THEME_HAZ = { desert: { jump: 2, train: 1 }, forest: { ford: 2, jump: 1, train: 1 }, snow: { jump: 1 }, city: { cross: 2 }, industrial: { train: 1, jump: 1 }, volcano: { lava: 4, jump: 1 }, coast: { wave: 1, ford: 1, jump: 1 }, mesa: { jump: 2, train: 1 }, warzone: { jump: 1 } };
+const THEME_HAZ = { desert: { jump: 2, train: 2 }, forest: { ford: 2, jump: 1, train: 1 }, snow: { jump: 1 }, city: { cross: 4 }, industrial: { train: 2, jump: 1 }, volcano: { lava: 4, jump: 1 }, coast: { wave: 1, ford: 1, jump: 1 }, mesa: { jump: 2, train: 2 }, warzone: { jump: 1 } };
 function placeHazards(T, custom) {
   const rng = mulberry32(T.seed ^ 0x2545f491), N = T.N, out = [];
   const th = THEME_HAZ[T.theme] || {};
   const flat = (i, span, lim) => { for (let q = -span; q <= span; q++) { const k = (i + q + N) % N; if (Math.abs(T.curv[k]) > lim || T.z[k] >= ELEV_T || T.tn[k]) return false; } return true; };
-  const far = (x, y, d) => !out.some(h => Math.hypot(h.x - x, h.y - y) < d) && !T.items.some(it => (it.t === 'boost' || it.t === 'oil') && Math.hypot(it.x - x, it.y - y) < 160);
+  const far = (x, y, d, type) => !out.some(h => Math.hypot(h.x - x, h.y - y) < (h.t === type ? d : 520)) && !T.items.some(it => (it.t === 'boost' || it.t === 'oil') && Math.hypot(it.x - x, it.y - y) < 160);
   if (T.data.hazards !== false) for (const [type, count] of Object.entries(th)) {
     let placed = 0;
     for (let tries = 0; tries < 600 && placed < count; tries++) {
       const i = Math.floor(N * (0.09 + rng() * 0.82));
-      const span = type === 'wave' ? 9 : type === 'train' ? 14 : type === 'lava' ? 3 : 10, lim = type === 'lava' ? 0.01 : type === 'wave' ? 0.0011 : 0.0007;
-      if (!flat(i, span, lim) || !far(T.x[i], T.y[i], type === 'cross' ? 2400 : 1100)) continue;
-      const p = pointAt(T, i, 0); out.push({ t: type, x: p.x, y: p.y, a: p.a, hw: T.hw[i], f: i, seed: Math.floor(rng() * 1e6), side: rng() < 0.5 ? 1 : -1 }); placed++;
+      const span = type === 'wave' ? 9 : type === 'train' ? 9 : type === 'cross' ? 6 : type === 'lava' ? 3 : 10, lim = type === 'lava' ? 0.01 : type === 'wave' || type === 'cross' ? 0.0011 : type === 'train' ? 0.0009 : 0.0007;
+      if (!flat(i, span, lim) || !far(T.x[i], T.y[i], type === 'cross' ? 1500 : type === 'train' ? 2200 : 1100, type)) continue;
+      const p = pointAt(T, i, 0); const hz = { t: type, x: p.x, y: p.y, a: p.a, hw: T.hw[i], f: i, seed: Math.floor(rng() * 1e6), side: rng() < 0.5 ? 1 : -1 }; if (type === 'train') { setupRail(T, hz); if (!hz.cr.length) continue; } out.push(hz); placed++;
     }
   }
   for (const c of custom) {
     if (c.t === 'bomber') { T.bomber = true; continue; }
     const n = nearest(T, c.x, c.y, -1), p = pointAt(T, n.f, 0);
     const onRoad = Math.abs(n.lat) < n.hw + 60;
-    out.push({ t: c.t, x: onRoad && c.t !== 'lava' && c.t !== 'wave' ? p.x : c.x, y: onRoad && c.t !== 'lava' && c.t !== 'wave' ? p.y : c.y, a: p.a, hw: n.hw, f: Math.floor(n.f), seed: ((c.x * 31 + c.y * 17) | 0) & 0xffff, side: n.lat >= 0 ? 1 : -1 });
+    const hzc = { t: c.t, x: onRoad && c.t !== 'lava' && c.t !== 'wave' ? p.x : c.x, y: onRoad && c.t !== 'lava' && c.t !== 'wave' ? p.y : c.y, a: p.a, hw: n.hw, f: Math.floor(n.f), seed: ((c.x * 31 + c.y * 17) | 0) & 0xffff, side: n.lat >= 0 ? 1 : -1 }; if (c.t === 'train') { setupRail(T, hzc); if (!hzc.cr.length) hzc.cr = [{ x: hzc.x, y: hzc.y, u: 0, f: n.f, a: p.a, hw: n.hw, tx: Math.cos(p.a), ty: Math.sin(p.a), nx: -Math.sin(p.a), ny: Math.cos(p.a) }]; }
+    out.push(hzc);
   }
   if (T.data.bomber || (T.th.bomber && T.data.hazards !== false)) T.bomber = true;
   T.hazards = out.map((h, k) => ({ ...h, id: k }));
+}
+
+/** A railway crosses the whole map along a line through the hazard: find where it meets the road (each meeting becomes a level crossing). */
+function setupRail(T, h) {
+  const rx = Math.cos(h.a + Math.PI / 2), ry = Math.sin(h.a + Math.PI / 2), N = T.N; let u0 = -1e9, u1 = 1e9;
+  const lim = (p, d, max) => { if (Math.abs(d) < 1e-6) return; const a = -p / d, b = (max - p) / d; u0 = Math.max(u0, Math.min(a, b)); u1 = Math.min(u1, Math.max(a, b)); };
+  lim(h.x, rx, T.W); lim(h.y, ry, T.H); h.rx = rx; h.ry = ry; h.u0 = u0; h.u1 = u1;
+  const cr = [];
+  for (let i = 0; i < N; i++) {
+    const j = (i + 1) % N, si = (T.x[i] - h.x) * -ry + (T.y[i] - h.y) * rx, sj = (T.x[j] - h.x) * -ry + (T.y[j] - h.y) * rx;
+    if (!(si * sj <= 0) || (si === 0 && sj === 0)) continue;
+    const t = si === sj ? 0 : si / (si - sj), px = T.x[i] + (T.x[j] - T.x[i]) * t, py = T.y[i] + (T.y[j] - T.y[i]) * t, u = (px - h.x) * rx + (py - h.y) * ry;
+    if (u < u0 + 40 || u > u1 - 40 || T.elev[i] || T.elev[j] || T.tn[i] || i < 22 || i > N - 22) continue;
+    const a = T.ang[i]; cr.push({ x: px, y: py, u, f: i + t, a, hw: T.hw[i], tx: Math.cos(a), ty: Math.sin(a), nx: -Math.sin(a), ny: Math.cos(a) });
+  }
+  cr.sort((p, q) => p.u - q.u); const out = []; for (const c of cr) if (!out.length || c.u - out[out.length - 1].u > 160) out.push(c);
+  h.cr = out;
 }
 
 /** Distance from a world point to the nearest road edge (negative on tarmac). Uses a coarse spatial hash. */
@@ -303,6 +350,7 @@ function placeProps(T, custom) {
     const big = ['tower', 'building', 'container', 'tank', 'adobe', 'mesa', 'cabin', 'crane', 'billboard', 'hut', 'ruin'].includes(type);
     const need = VERGE + 36 + (big ? 70 : 0);
     if (clearDist(px, py) < need) continue;
+    if (T.hazards.some(h => h.t === 'train' && Math.abs((px - h.x) * -h.ry + (py - h.y) * h.rx) < 80 + (big ? 60 : 0))) continue;
     const pk = Math.floor(px / 70) + Math.floor(py / 70) * 400; const q = placedGrid.get(pk);
     if (q && Math.hypot(q.x - px, q.y - py) < (big ? 120 : 34)) continue;
     const pr = { type, x: px, y: py, s: 0.75 + rng() * 0.7, r: rng() * TAU, v: rng() };
