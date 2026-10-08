@@ -279,10 +279,10 @@ function layer(g, v, c, h, fn) {
 }
 
 /** visible equipment: armour plating, spikes, turret, rear guard, missile pods */
-function drawMods(g, v, c, t) {
-  const m = c.mods; if (!m) return; const L = c.len, Wd = c.wid, hl = L / 2, hwid = Wd / 2;
+function drawMods(g, v, c, t, phase = 'all') {
+  const m = c.mods; if (!m) return; const st = phase !== 'dynamic', dy = phase !== 'static'; const L = c.len, Wd = c.wid, hl = L / 2, hwid = Wd / 2;
   const steel = '#9aa4b2', dark = '#5c6573', bolt = '#d7dde6';
-  if (m.armor > 0) layer(g, v, c, 11, () => {
+  if (st && m.armor > 0) layer(g, v, c, 11, () => {
     g.fillStyle = steel; g.fillRect(-hl * 0.66, -hwid - 0.6, L * 0.62, 3.6); g.fillRect(-hl * 0.66, hwid - 3, L * 0.62, 3.6);
     g.fillStyle = dark; g.fillRect(-hl * 0.66, -hwid + 2.3, L * 0.62, 0.9); g.fillRect(-hl * 0.66, hwid - 3.2, L * 0.62, 0.9);
     if (m.armor >= 2) { g.fillStyle = steel; rr(g, hl * 0.12, -hwid * 0.58, hl * 0.78, hwid * 1.16, 3); g.fill(); g.strokeStyle = dark; g.lineWidth = 1; g.beginPath(); for (let k = 0; k < 3; k++) { g.moveTo(hl * 0.2 + k * 5, -hwid * 0.5); g.lineTo(hl * 0.3 + k * 5, 0); g.lineTo(hl * 0.2 + k * 5, hwid * 0.5); } g.stroke(); }
@@ -294,18 +294,18 @@ function drawMods(g, v, c, t) {
     g.fillStyle = dark; g.fillRect(x - (dir > 0 ? 1.5 : 0.5), -hwid + 1, 2, Wd - 2); g.fillStyle = '#cfd6df';
     for (let k = 0; k < n; k++) { const y = -hwid + 2.5 + (k + 0.5) * (Wd - 5) / n; g.beginPath(); g.moveTo(x, y - 2); g.lineTo(x + dir * len, y); g.lineTo(x, y + 2); g.closePath(); g.fill(); g.stroke(); }
   });
-  if (m.fs) spikeRow(hl, 1, m.fs); if (m.rs) spikeRow(-hl, -1, m.rs);
-  if (m.ws) { const sp = Math.hypot(c.vx || 0, c.vy || 0); for (const [wx, wy] of [[hl * 0.62, -1], [hl * 0.62, 1], [-hl * 0.62, -1], [-hl * 0.62, 1]]) layer(g, v, c, 4, () => {
+  if (st && m.fs) spikeRow(hl, 1, m.fs); if (st && m.rs) spikeRow(-hl, -1, m.rs);
+  if (st && m.ws) { const sp = Math.hypot(c.vx || 0, c.vy || 0); for (const [wx, wy] of [[hl * 0.62, -1], [hl * 0.62, 1], [-hl * 0.62, -1], [-hl * 0.62, 1]]) layer(g, v, c, 4, () => {
     g.translate(wx, wy * (hwid + 0.5)); g.rotate(t * (2 + sp / 90) * wy); const len = 3.6 + m.ws * 1.7; g.fillStyle = '#d5dae0'; g.strokeStyle = '#6b7380'; g.lineWidth = 0.5;
     for (let k = 0; k < 6; k++) { g.save(); g.rotate(k * Math.PI / 3); g.beginPath(); g.moveTo(1.2, -1.4); g.lineTo(1.2 + len, 0); g.lineTo(1.2, 1.4); g.closePath(); g.fill(); g.stroke(); g.restore(); } g.fillStyle = '#333'; g.beginPath(); g.arc(0, 0, 1.8, 0, TAU); g.fill(); }); }
-  if (m.homing) layer(g, v, c, 16, () => { for (const s of [-1, 1]) { g.fillStyle = '#2d3340'; rr(g, hl * 0.12, s * hwid * 0.62 - 2.4, hl * 0.62, 4.8, 1.4); g.fill(); g.fillStyle = '#cfe8ff'; for (let k = 0; k < 3; k++) { g.beginPath(); g.arc(hl * 0.68 - k * 4.2, s * hwid * 0.62, 1.3, 0, TAU); g.fill(); } } });
-  if (m.cluster) layer(g, v, c, 17, () => { g.fillStyle = '#4a5a3a'; g.beginPath(); g.arc(-hl * 0.72, 0, 4.6, 0, TAU); g.fill(); g.strokeStyle = '#d8c64a'; g.lineWidth = 1.4; g.beginPath(); g.arc(-hl * 0.72, 0, 3, 0, TAU); g.stroke(); });
-  if (m.guard) layer(g, v, c, 24, () => {
+  if (st && m.homing) layer(g, v, c, 16, () => { for (const s of [-1, 1]) { g.fillStyle = '#2d3340'; rr(g, hl * 0.12, s * hwid * 0.62 - 2.4, hl * 0.62, 4.8, 1.4); g.fill(); g.fillStyle = '#cfe8ff'; for (let k = 0; k < 3; k++) { g.beginPath(); g.arc(hl * 0.68 - k * 4.2, s * hwid * 0.62, 1.3, 0, TAU); g.fill(); } } });
+  if (st && m.cluster) layer(g, v, c, 17, () => { g.fillStyle = '#4a5a3a'; g.beginPath(); g.arc(-hl * 0.72, 0, 4.6, 0, TAU); g.fill(); g.strokeStyle = '#d8c64a'; g.lineWidth = 1.4; g.beginPath(); g.arc(-hl * 0.72, 0, 3, 0, TAU); g.stroke(); });
+  if (dy && m.guard) layer(g, v, c, 24, () => {
     g.translate(-hl * 0.52, 0); g.fillStyle = '#2d3340'; rr(g, -4, -4, 8, 8, 2); g.fill(); g.save(); g.rotate(t * 3); g.strokeStyle = '#9fe3ff'; g.lineWidth = 1.4; g.beginPath(); g.arc(0, 0, 6, -0.7, 0.7); g.stroke(); g.restore();
     for (let k = 0; k < m.guard; k++) { g.fillStyle = k < (c.guard ?? m.guard) ? '#46ff7a' : '#444'; g.beginPath(); g.arc(-3 + k * 3, 4.8, 0.95, 0, TAU); g.fill(); }
     if (c.guardFlash > 0) { g.strokeStyle = `rgba(120,220,255,${c.guardFlash * 2})`; g.lineWidth = 2; g.beginPath(); g.arc(0, 0, 14 + (0.35 - c.guardFlash) * 40, 0, TAU); g.stroke(); }
   });
-  if (m.turret) layer(g, v, c, 24, () => {
+  if (dy && m.turret) layer(g, v, c, 24, () => {
     g.fillStyle = '#2b303b'; g.beginPath(); g.arc(hl * 0.02, 0, 5.4, 0, TAU); g.fill(); g.strokeStyle = '#7f8999'; g.lineWidth = 1; g.stroke();
     g.save(); g.translate(hl * 0.02, 0); g.rotate((c.turA ?? c.a) - c.a); g.fillStyle = '#4f5868'; g.fillRect(0, -1.5, 9 + m.turret * 1.5, 3); g.fillStyle = '#20242c'; g.fillRect(8 + m.turret * 1.5, -1.9, 2.6, 3.8); g.fillStyle = '#7dffe8'; g.beginPath(); g.arc(-1, 0, 1.4, 0, TAU); g.fill(); g.restore();
   });
@@ -339,6 +339,23 @@ export function drawCar(g, v, c, t, opts = {}) {
     layer(g, v, c, 5, () => g.drawImage(flameSprite(), -hl - fl, -5, fl, 10));
     g.restore();
   }
+  // body: from a pre-rendered sprite (one drawImage) unless asked to draw it live
+  if (opts.live || v.live) drawCarBody(g, v, c, t, flash); else blitCarBody(g, v, c);
+  if (c.braking) layer(g, v, c, 9, () => { g.globalCompositeOperation = 'lighter'; const spr = glowSprite('255,40,30', 0.8); for (const sy of [-1, 1]) g.drawImage(spr, -hl - 16, sy * (hwid - 4) - 16, 32, 32); });
+  drawMods(g, v, c, t, 'dynamic');
+  const hpf = c.hp / c.maxHp;
+  g.globalAlpha = 1;
+  if (opts.tag) { // name tag
+    const X = v.px(c.x, c.y, 34), Y = v.py(c.x, c.y, 34) - 14 * v.zoom;
+    const tg = tagSprite(c.name, opts.tagColor || '#fff'), sc = Math.max(10, 12 * v.zoom) / 24; g.drawImage(tg, X - tg.width * sc / 2, Y - 19 * sc, tg.width * sc, tg.height * sc);
+    const w = 34 * v.zoom; g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(X - w / 2, Y + 3, w, 4 * v.zoom); g.fillStyle = hpf > 0.5 ? '#46d16a' : hpf > 0.25 ? '#f2c230' : '#e8402f'; g.fillRect(X - w / 2, Y + 3, w * clamp(hpf, 0, 1), 4 * v.zoom);
+  }
+}
+
+
+/** the static part of a car (wheels, body, cabin, armour/spikes/launchers, damage) */
+function drawCarBody(g, v, c, t, flash) {
+  const L = c.len, Wd = c.wid, col = c.color, hl = L / 2, hwid = Wd / 2;
   // wheels
   const steer = (c.steerVis || 0) * 0.45;
   const wheel = (wx, wy, a) => layer(g, v, c, 3, () => { g.translate(wx, wy); g.rotate(a); g.fillStyle = '#0c0c0c'; rr(g, -5.2, -2.6, 10.4, 5.2, 1.6); g.fill(); });
@@ -373,20 +390,37 @@ export function drawCar(g, v, c, t, opts = {}) {
     g.fillStyle = shade(col, 0.05); rr(g, off - cw / 2 + cw * 0.28, -hwid + 5, cw * 0.5, Wd - 10, 3); g.fill();
   });
   if (shape === 'sport' || shape === 'muscle') layer(g, v, c, 21, () => { g.fillStyle = shade(col, -0.35); g.fillRect(-hl - 1, -hwid + 1, 4, Wd - 2); });
-  if (c.braking) layer(g, v, c, 9, () => { g.globalCompositeOperation = 'lighter'; const spr = glowSprite('255,40,30', 0.8); for (const sy of [-1, 1]) g.drawImage(spr, -hl - 16, sy * (hwid - 4) - 16, 32, 32); });
-  drawMods(g, v, c, t);
-  // damage overlay
+  drawMods(g, v, c, t, 'static');
   const hpf = c.hp / c.maxHp;
   if (hpf < 0.6) layer(g, v, c, 14, () => { g.fillStyle = `rgba(20,10,5,${(0.6 - hpf) * 0.8})`; g.beginPath(); g.ellipse(hl * 0.25, 3, hl * 0.4, hwid * 0.5, 0.4, 0, TAU); g.fill(); g.beginPath(); g.ellipse(-hl * 0.4, -4, hl * 0.28, hwid * 0.4, 0, 0, TAU); g.fill(); });
-  g.globalAlpha = 1;
-  if (opts.tag) { // name tag
-    const X = v.px(c.x, c.y, 34), Y = v.py(c.x, c.y, 34) - 14 * v.zoom;
-    const tg = tagSprite(c.name, opts.tagColor || '#fff'), sc = Math.max(10, 12 * v.zoom) / 24; g.drawImage(tg, X - tg.width * sc / 2, Y - 19 * sc, tg.width * sc, tg.height * sc);
-    const w = 34 * v.zoom; g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(X - w / 2, Y + 3, w, 4 * v.zoom); g.fillStyle = hpf > 0.5 ? '#46d16a' : hpf > 0.25 ? '#f2c230' : '#e8402f'; g.fillRect(X - w / 2, Y + 3, w * clamp(hpf, 0, 1), 4 * v.zoom);
+}
+/* Car sprite cache: each car is rendered once per heading (64 directions) and damage level, then blitted with a small
+   rotation for the remainder. Turns ~40 canvas operations per car per frame into one - the big win when the pack is together. */
+const CSPR = new Map(), DIRS = 64, SS = 1.6;
+let csprCount = 0;
+function carKey(c) { if (c._skm !== c.mods || c._skc !== c.color) { c._skm = c.mods; c._skc = c.color; c._sk = c.color + c.shape + c.len + 'x' + c.wid + (c.mods ? JSON.stringify(c.mods) : ''); } return c._sk; }
+function blitCarBody(g, v, c) {
+  const step = TAU / DIRS, b = ((Math.round(c.a / step) % DIRS) + DIRS) % DIRS, hpf = c.hp / c.maxHp, dmg = hpf < 0.25 ? 2 : hpf < 0.6 ? 1 : 0;
+  const key = carKey(c) + '|' + b + '|' + dmg; let spr = CSPR.get(key);
+  if (!spr) {
+    if (csprCount > 1600) { CSPR.clear(); csprCount = 0; } // crude cap on memory
+    const size = Math.ceil((c.len + 34) * SS); spr = document.createElement('canvas'); spr.width = spr.height = size; const sg = spr.getContext('2d');
+    const sv = new View(); sv.x = 0; sv.y = 0; sv.zoom = SS; sv.W = sv.H = size;
+    drawCarBody(sg, sv, { ...c, x: 0, y: 0, a: b * step, z: 0, rampZ: 0, steerVis: 0, braking: false, invuln: 0, hp: dmg === 2 ? 0.2 : dmg === 1 ? 0.45 : 1, maxHp: 1 }, 0, false);
+    CSPR.set(key, spr); csprCount++;
   }
+  const h = (c.z || 0) + (c.rampZ || 0), X = v.px(c.x, c.y, h), Y = v.py(c.x, c.y, h), k = v.zoom / SS, half = spr.width / 2;
+  g.save(); g.translate(X, Y); g.rotate(c.a - b * step); g.drawImage(spr, -half * k, -half * k, spr.width * k, spr.height * k); g.restore();
 }
 
 /* ------------------------------------------------------------------ projectiles */
+/** every machine-gun tracer on screen in two strokes (one per colour) */
+export function drawTracers(g, v, list) {
+  let a = null, b = null; const l = 16 * v.zoom;
+  for (const p of list) { if (p.type !== 'mg' || !v.visible(p.x, p.y, 40)) continue; const pz = p.z || 9, X = v.px(p.x, p.y, pz), Y = v.py(p.x, p.y, pz), sp = Math.hypot(p.vx, p.vy) || 1, path = p.turret ? (b ||= new Path2D()) : (a ||= new Path2D()); path.moveTo(X, Y); path.lineTo(X - p.vx / sp * l, Y - p.vy / sp * l); }
+  if (!a && !b) return; g.save(); g.globalCompositeOperation = 'lighter'; g.lineWidth = 2.4 * v.zoom; g.lineCap = 'round';
+  if (a) { g.strokeStyle = 'rgba(255,200,80,0.95)'; g.stroke(a); } if (b) { g.strokeStyle = 'rgba(120,255,230,0.95)'; g.stroke(b); } g.restore();
+}
 export function drawProjectile(g, v, p, t) {
   const pz = p.z || 9;
   if (p.type === 'mg') {
@@ -471,14 +505,15 @@ export class Particles {
     }
     g.globalAlpha = 1;
     // pass 2: additive (fire, sparks, rings)
-    g.globalCompositeOperation = 'lighter'; const spr = fireSprite();
+    g.globalCompositeOperation = 'lighter'; const spr = fireSprite(), sparks = new Map();
     for (let i = 0; i < L.length; i++) {
       const p = L[i]; if (p.k === 's' || p.k === 'd') continue; if (!v.visible(p.x, p.y, 60)) continue;
       const X = v.sx(p.x), Y = v.sy(p.y), f = p.life / p.max;
       if (p.k === 'f') { const r = p.size * z * 1.15; g.globalAlpha = Math.min(1, f * 1.3); g.drawImage(spr, X - r, Y - r, r * 2, r * 2); }
-      else if (p.k === 'p') { g.globalAlpha = 1; g.strokeStyle = `rgba(${p.col},${f.toFixed(2)})`; g.lineWidth = 2 * z; g.beginPath(); g.moveTo(X, Y); g.lineTo(X - p.vx * 0.04 * z, Y - p.vy * 0.04 * z); g.stroke(); }
+      else if (p.k === 'p') { const key = p.col + '|' + Math.ceil(f * 4); let path = sparks.get(key); if (!path) sparks.set(key, path = new Path2D()); path.moveTo(X, Y); path.lineTo(X - p.vx * 0.04 * z, Y - p.vy * 0.04 * z); } // batched below
       else if (p.k === 'r') { g.globalAlpha = 1; g.strokeStyle = `rgba(${p.col},${(f * 0.8).toFixed(2)})`; g.lineWidth = 6 * f * z; g.beginPath(); g.arc(X, Y, p.size * (1 - f * 0.8) * z, 0, TAU); g.stroke(); }
     }
+    if (sparks.size) { g.lineWidth = 2 * z; for (const [key, path] of sparks) { const [col, a] = key.split('|'); g.globalAlpha = a / 4; g.strokeStyle = `rgb(${col})`; g.stroke(path); } }
     g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
   }
 }

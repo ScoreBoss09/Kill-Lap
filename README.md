@@ -59,6 +59,11 @@ Keyboard bindings can be changed in *Controls*. Gamepad dead-zone, steering sens
 * **Pedestrians** - people stroll along the verges and wander across the road; hit one and they go flying (+$25, lots of blood).
 * **Career finale** - finishing the last race of a series brings up a CHAMPION / CONGRATULATIONS / SERIES FAILED screen with your final position and the standings.
 * **Track hazards** - a **railway that runs right across the map** with a train that flattens anything in its way, and a working level crossing (signals, barriers, bell) everywhere the line meets the road, a **pedestrian crossing** in the city, **water fords** (hit them above about 120 km/h and you aquaplane straight across with no slowdown), **jump ramps**, erupting **lava vents**, a **tidal wave** that rolls in off the ocean (coastal maps have a real sea along one edge), and an **air raid** in the Warzone where a bomber drops bombs (marked on the road a moment before they land).
+* **Drift boost** - hold a slide through a corner (the handbrake helps) and blue sparks appear; keep it going until they turn orange for a bigger boost. Straighten up to cash it in (*DRIFT BOOST* / *SUPER DRIFT BOOST*).
+* **Jumps with a purpose** - jump ramps are narrow and the road either side of them is thick mud that slows you to a crawl. Line up with the ramp and you fly over it.
+* **Road variety** - roads narrow and widen along each lap, **chicanes** kink the long straights, and **humpback bridges** cross streams (take them fast and you get air).
+* **Secret shortcuts** - some circuits hide a dirt track behind a gap in the barrier (look for bushes, rocks or barrels by the roadside). It cuts across a big loop of the lap and there's a nitro on it.
+* **Shoot everything** - bullets and rockets set off mines in front of you (safer than driving over them) and take out pedestrians too.
 * **Raised roads, banking and mountains** - flyovers where the track crosses over itself, tunnels through hills, real 3D barriers, **banked curves** (the road surface tilts and the outer edge rises) and two **mountain maps** (Alpine Ascent, Red Summit) where switchback roads climb higher and higher up a mountain. Climbs slow you down and descents speed you up.
 * **Time Trial** - chase your **ghost**; your best lap is saved per track.
 * **Daily Challenge** - a new generated track every day, one global leaderboard.
@@ -154,7 +159,7 @@ Run `npm test` to validate every built-in and 40 generated tracks. The scripts i
 
 ## Performance tips
 
-The game uses a fixed 3/4 view, so everything that doesn't move - terrain, road, barriers, flyovers, tunnel hills, buildings and trees - is drawn once into map tiles while the line-up screen is showing. During the race only cars, people, traffic, weapons and effects are drawn each frame, so overpasses and tunnels cost no more than open road and nothing wobbles or re-stitches.
+The game uses a fixed 3/4 view, so everything that doesn't move - terrain, road, barriers, flyovers, tunnel hills, buildings and trees - is drawn once into map tiles while the line-up screen is showing. During the race only cars, people, traffic, weapons and effects are drawn each frame, so overpasses and tunnels cost no more than open road and nothing wobbles or re-stitches. Each car body is pre-drawn once per heading (and damage level) and stamped onto the screen, so a whole pack bunched together costs about as much as a couple of cars. Bullet tracers and sparks are drawn in batches, and repeated sounds (a pack all firing and bumping) are merged instead of starting hundreds of synth voices a second.
 
 If the game still stutters, open **Settings → Graphics quality** and pick *Low*: it renders at a capped lower resolution, bakes the map at half resolution and drops textures, car lights and cloud shadows. The game also lowers its render resolution automatically if the frame rate stays under about 40 fps.
 

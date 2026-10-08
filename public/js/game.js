@@ -1,6 +1,6 @@
 // Kill Lap race simulation + world rendering.
 import { clamp, angDiff, lerp, TAU, mulberry32, rgba, hashStr } from './util.js';
-import { compileTrack, nearest, pointAt, VERGE, ELEV_T } from './tracks.js';
+import { compileTrack, nearest, pointAt, onCut, VERGE, ELEV_T } from './tracks.js';
 import { Hazards } from './hazards.js';
 import { Peds } from './peds.js';
 import { Traffic } from './traffic.js';
@@ -8,13 +8,13 @@ import { makeVis, tunnelRuns, TUN_H } from './structures.js';
 import { DYNAMIC } from './ground.js';
 import { carStats, CAR_BY_ID, WEAPONS, DIFFICULTIES, AI_NAMES } from './cars.js';
 import { Ground, gridPos, makeMinimap } from './ground.js';
-import { View, drawProp, drawProp2Glow, drawItem, drawCar, drawProjectile, drawMine, Particles, glow } from './sprites.js';
+import { View, drawProp, drawProp2Glow, drawItem, drawCar, drawProjectile, drawTracers, drawMine, Particles, glow } from './sprites.js';
 import Audio from './audio.js';
 import Input from './input.js';
 
 const FIXED = 1 / 60;
 export const AQUAPLANE = 330; // px/s (about 119 km/h): above this, water has no effect
-const PICKUP_R = 30, RESPAWN_ITEM = 14, FIN_OFF = 22; // FIN_OFF: lap counts once the car centre clears the far edge of the checkered band
+const PICKUP_R = 30, RESPAWN_ITEM = 6, FIN_OFF = 22; // FIN_OFF: lap counts once the car centre clears the far edge of the checkered band
 
 const CLOUDS = [];
 /** soft irregular cloud shadow (two variants, built once) */
@@ -51,7 +51,7 @@ export class Game {
     this.diff = DIFFICULTIES[clamp(opts.diff ?? 1, 0, 3)]; this.diffIdx = clamp(opts.diff ?? 1, 0, 3);
     this.settings = opts.settings || {}; this.quality = this.settings.quality ?? 2;
     this.ground = new Ground(this.T, this.quality); this.mini = makeMinimap(this.T);
-    this.view = new View(); this.view.quality = this.quality; this.fx = new Particles(); this.fx.max = [160, 320, 480][this.quality] ?? 480;
+    this.view = new View(); this.view.quality = this.quality; this.fx = new Particles(); this.fx.max = [110, 260, 420][this.quality] ?? 420;
     this.time = 0; this.raceTime = 0; this.acc = 0; this.state = 'countdown'; this.cd = this.mode === 'attract' ? 0.5 : 3.6; this.lastCdBeep = 4;
     this.cars = []; this.byId = {}; this.proj = []; this.mines = []; this.feed = []; this.msgs = [];
     this.rng = mulberry32(opts.seed || 1); this.nextId = 1; this.netT = 0; this.over = false; this.results = null; this.overT = 0;
@@ -122,6 +122,7 @@ export class Game {
       else this.aiThink(c, dt, racing);
       if (!racing && this.state === 'countdown') { c.input.hb = c.human ? false : false; }
       this.drive(c, dt, racing);
+      if (this.state === 'countdown') { if (!c.grid) c.grid = { x: c.x, y: c.y, a: c.a }; c.x = c.grid.x; c.y = c.grid.y; c.a = c.grid.a; c.vx = c.vy = 0; c.w = 0; } // held on the grid until GO (slopes and revving used to creep cars over the line)
       if (racing || this.state === 'over') this.track(c, dt);
       if (this.weapons && racing && !c.finished) this.weaponInput(c, dt);
       c.cool.mg -= dt; c.cool.rocket -= dt; c.cool.mine -= dt; c.cool.special -= dt; c.guardFlash = Math.max(0, (c.guardFlash || 0) - dt);
@@ -155,10 +156,19 @@ export class Game {
     let vf = c.vx * cs + c.vy * sn;
     const vf0 = vf;
     const nr = nearest(T, c.x, c.y, c.pos);
-    c.pos = nr.f; c.lat = nr.lat; c.zRoad = nr.zl; c.z = nr.zl + (c.zAir || 0); const alat = Math.abs(nr.lat), off = alat > nr.hw;
+    // secret shortcut: off the tarmac but on a dirt cut-through, progress is mapped along the loop it skips
+    const ct = T.cuts.length && Math.abs(nr.lat) > nr.hw - 6 ? onCut(T, c.x, c.y, c.onCut ? 40 : 10) : null; c.onCut = !!ct;
+    if (ct) { const cu = ct.cut; c.pos = (cu.iA + ct.k * cu.span) % T.N; c.lat = 0; c.zRoad = 0; c.z = c.zAir || 0; if (c.human && !this.seenCut) { this.seenCut = true; this.msg('SECRET SHORTCUT!', 1.4, '#9dff7a'); this.stats.cuts = (this.stats.cuts || 0) + 1; } }
+    else { c.pos = nr.f; c.lat = nr.lat; c.zRoad = nr.zl; c.z = nr.zl + (c.zAir || 0); }
+    // humpback bridges: take the crest fast enough and the road drops away faster than gravity, so you fly
+    if (T.humps.length && !ct && !air && T.humps.some(h => Math.abs(((nr.i - h + T.N * 1.5) % T.N) - T.N / 2) < 15)) {
+      const j = (nr.i + 1) % T.N, gr = T.grade[nr.i] + (T.grade[j] - T.grade[nr.i]) * (nr.f - nr.i), along = c.vx * T.tx[nr.i] + c.vy * T.ty[nr.i], vr = gr * along;
+      if (c.vrP != null) { const acc = (vr - c.vrP) / dt; if (acc < -640 && Math.abs(along) > 300) { c.vz = clamp(Math.abs(along) * 0.5 - 50, 80, 220); c.zAir = 0.5; c.vrP = null; if (c.human && !this.seenHump) { this.seenHump = true; this.msg('AIRTIME!', 0.9, '#ffe14a'); } } else c.vrP = vr; } else c.vrP = vr;
+    } else c.vrP = null;
+    const alat = Math.abs(nr.lat), off = !ct && alat > nr.hw, deep = off && alat > nr.hw + VERGE * 0.55; // just over the edge is only a little slower than deep grass
     // road grade slows climbs and speeds descents; a banked road pulls you towards its low (inside) edge and gives extra grip
-    { const along = c.vx * T.tx[nr.i] + c.vy * T.ty[nr.i]; vf -= T.grade[nr.i] * (along >= 0 ? 1 : -1) * 620 * dt; const slope = nr.tilt / (2 * nr.hw); if (Math.abs(slope) > 0.01 && !((c.zAir || 0) > 1)) { c.vx += nr.nx * slope * 380 * dt; c.vy += nr.ny * slope * 380 * dt; } c.bankGrip = 1 + Math.min(0.3, Math.abs(nr.tilt) / 200); }
-    c.surface = off ? 'grass' : 'road';
+    if (ct) c.bankGrip = 1; else { const along = c.vx * T.tx[nr.i] + c.vy * T.ty[nr.i]; vf -= T.grade[nr.i] * (along >= 0 ? 1 : -1) * 620 * dt; const slope = nr.tilt / (2 * nr.hw); if (Math.abs(slope) > 0.01 && !((c.zAir || 0) > 1)) { c.vx += nr.nx * slope * 380 * dt; c.vy += nr.ny * slope * 380 * dt; } c.bankGrip = 1 + Math.min(0.3, Math.abs(nr.tilt) / 200); }
+    c.surface = off ? 'grass' : ct ? 'dirt' : 'road';
     let thr = racing || this.state === 'countdown' ? inp.throttle : 0, brk = racing ? inp.brake : (this.state === 'countdown' ? 0 : inp.brake);
     if (air) { thr = 0; brk = 0; }
     if (this.state === 'countdown') { thr = 0; brk = 0; }
@@ -170,21 +180,22 @@ export class Game {
     c.boostT = Math.max(0, c.boostT - dt); c.oilT = Math.max(0, c.oilT - dt);
     const nb = c.nitroOn ? 1 + 0.32 * st.nitroPower : 1, bb = c.boostT > 0 ? 1.22 : 1;
     const boosting = c.nitroOn || c.boostT > 0;
-    const topV = st.top * nb * bb * (off ? (boosting ? 0.9 : 0.62) : 1) * (c.hp < c.maxHp * 0.25 ? 0.93 : 1);
+    c.mudT = Math.max(0, (c.mudT || 0) - dt); const mud = c.mudT > 0 && !air;
+    const topV = st.top * nb * bb * (off ? (boosting ? 0.95 : deep ? 0.76 : 0.9) : ct ? 0.94 : 1) * (mud ? 0.42 : 1) * (c.hp < c.maxHp * 0.25 ? 0.93 : 1);
     let force = 0;
     if (thr > 0) force += st.accel * thr * (c.nitroOn ? 1.9 * st.nitroPower : 1) * (c.boostT > 0 ? 2.2 : 1) * clamp(1.05 - vf / topV, -0.3, 1.1);
     if (brk > 0) { if (vf > 15) force -= st.brake * brk; else force -= st.accel * 0.5 * brk * clamp(1 + vf / 160, 0, 1); }
     c.braking = brk > 0 && vf > 10;
-    if (thr === 0 && brk === 0) vf -= vf * 0.35 * dt;
-    vf -= vf * (off ? (boosting ? 0.5 : 1.6) : 0.12) * dt;
+    if (thr === 0 && brk === 0) vf -= vf * 0.25 * dt;
+    vf -= vf * (off ? (boosting ? 0.3 : deep ? 0.9 : 0.35) : 0.1) * dt + (mud ? vf * 2.4 * dt : 0);
     if (vf > topV) vf -= (vf - topV) * 1.5 * dt;
     vf += force * dt;
     // steering
     const spd = Math.abs(vf), sgn = vf >= -3 ? 1 : -1;
-    const maxW = st.steer * (3.35 - 1.7 * clamp(spd / st.top, 0, 1.2)) * (inp.hb ? 1.3 : 1) * (air ? 0.25 : 1);
+    const maxW = st.steer * (3.6 - 1.75 * clamp(spd / st.top, 0, 1.2)) * (inp.hb ? 1.45 : 1) * (air ? 0.25 : 1);
     const lowSpeed = clamp(spd / 70, 0, 1);
     const wT = -inp.steer * -1 * maxW * lowSpeed * sgn;
-    c.w += (wT - c.w) * Math.min(1, 10 * dt);
+    c.w += (wT - c.w) * Math.min(1, 13 * dt);
     if (c.oilT > 0) c.w += Math.sin(this.time * 17 + c.slot) * 5 * dt * 10;
     c.a += c.w * dt; c.steerVis += (inp.steer - c.steerVis) * Math.min(1, 12 * dt);
     // The heading has rotated but the car's momentum has not: project the world-space velocity into the new
@@ -195,12 +206,16 @@ export class Game {
     // aquaplaning: hit water fast enough and the car skims straight across it with no drag or grip loss
     const wet = c.waterT > 0 && !air, aqua = wet && Math.abs(vf2) >= AQUAPLANE;
     if (aqua) { c.aquaT = 0.25; if (c.human && !this.seenAqua) { this.seenAqua = true; this.msg('AQUAPLANING!', 1.2, '#7fe6ff'); } if (this.quality > 0 && Math.random() < 0.3) for (const s of [-1, 1]) this.fx.smoke(c.x - cs2 * c.len * 0.45 - sn2 * s * c.wid * 0.45, c.y - sn2 * c.len * 0.45 + cs2 * s * c.wid * 0.45, -c.vx * 0.25 - sn2 * s * 90, -c.vy * 0.25 + cs2 * s * 90, 6, 0.45, '225,245,255', 0.6); }
-    const G = 1000 * st.grip * (inp.hb ? 0.3 : 1) * (off ? 0.7 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.92 : 1) * (air ? 0 : 1) * (wet && !aqua ? 0.55 : 1) * (c.bankGrip || 1);
+    const G = 1080 * st.grip * (inp.hb ? 0.3 : 1) * (off ? (deep ? 0.78 : 0.9) : ct ? 0.92 : 1) * (mud ? 0.75 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.92 : 1) * (air ? 0 : 1) * (wet && !aqua ? 0.55 : 1) * (c.bankGrip || 1);
     if (wet && !aqua) vf2 -= vf2 * 1.15 * dt;
     const dv = clamp(-vl * 9, -G, G) * dt;
     vl += Math.abs(dv) > Math.abs(vl) ? -vl : dv;
     if (inp.hb) vf2 -= vf2 * 0.3 * dt;
     c.slip = Math.abs(vl); vf = vf2;
+    // drift boost: hold a slide through a corner (handbrake helps) to charge it; straighten up to cash it in
+    if (!air && !off && Math.abs(vf2) > 170 && c.slip > 70 && racing) { c.drift = (c.drift || 0) + dt; const lv = c.drift > 1.3 ? 2 : c.drift > 0.55 ? 1 : 0;
+      if (lv && this.quality > 0 && Math.random() < 0.5) for (const s of [-1, 1]) this.fx.spark(c.x - cs2 * c.len * 0.4 - sn2 * s * c.wid * 0.45, c.y - sn2 * c.len * 0.4 + cs2 * s * c.wid * 0.45, -c.vx * 0.2 + (Math.random() - 0.5) * 80, -c.vy * 0.2 + (Math.random() - 0.5) * 80, 0.25, lv === 2 ? '255,150,40' : '90,190,255'); }
+    else if (c.drift) { if (c.slip < 40 || off || air) { if (c.drift > 0.55) { const b = c.drift > 1.3 ? 1.1 : 0.6; c.boostT = Math.max(c.boostT, b); this.snd('boost', c.x, c.y, 0.6, 1.2); if (c.human) { this.msg(c.drift > 1.3 ? 'SUPER DRIFT BOOST!' : 'DRIFT BOOST', 0.8, c.drift > 1.3 ? '#ffb347' : '#7fd0ff'); this.stats.drifts = (this.stats.drifts || 0) + 1; } } c.drift = 0; } }
     c.vx = cs2 * vf2 - sn2 * vl; c.vy = sn2 * vf2 + cs2 * vl;
     c.x += c.vx * dt; c.y += c.vy * dt;
     const sp = Math.hypot(c.vx, c.vy); c.maxSpeed = Math.max(c.maxSpeed, sp);
@@ -211,7 +226,7 @@ export class Game {
       for (const s of [-1, 1]) { const x = c.x - cs2 * back - sn2 * wy * s, y = c.y - sn2 * back + cs2 * wy * s; if (c.lsx) this.ground.line(c['lx' + s], c['ly' + s], x, y, 4.5, '#050505', clamp(c.slip / 260, 0.25, 0.6)); c['lx' + s] = x; c['ly' + s] = y; }
       c.lsx = true; if (Math.random() < 0.35 && this.quality > 0) this.fx.smoke(c.x - cs2 * back, c.y - sn2 * back, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, 6, 0.6, '210,210,210', 0.28);
     } else c.lsx = false;
-    if (off && sp > 90 && Math.random() < 0.5 && this.quality > 0) this.fx.smoke(c.x - cs2 * 14, c.y - sn2 * 14, -c.vx * 0.1 + (Math.random() - 0.5) * 30, -c.vy * 0.1 + (Math.random() - 0.5) * 30, 7, 0.7, this.T.theme === 'snow' ? '240,245,250' : '160,140,100', 0.42);
+    if ((off || ct) && sp > 90 && Math.random() < 0.5 && this.quality > 0) this.fx.smoke(c.x - cs2 * 14, c.y - sn2 * 14, -c.vx * 0.1 + (Math.random() - 0.5) * 30, -c.vy * 0.1 + (Math.random() - 0.5) * 30, 7, 0.7, this.T.theme === 'snow' ? '240,245,250' : '160,140,100', 0.42);
     if (c.nitroOn && this.quality > 0) { this.fx.fire(c.x - cs2 * c.len * 0.5, c.y - sn2 * c.len * 0.5, -cs2 * 140 + (Math.random() - 0.5) * 40, -sn2 * 140 + (Math.random() - 0.5) * 40, 7, 0.25); }
     // damage smoke / fire
     const hpf = c.hp / c.maxHp;
@@ -219,7 +234,8 @@ export class Game {
     if (hpf < 0.2 && Math.random() < 0.35) this.fx.fire(c.x + cs2 * 8, c.y + sn2 * 8, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30 - 20, 7, 0.3);
     // wall
     const lim = nr.hw + nr.wl - 2;
-    if (alat > lim) {
+    if (ct && alat > lim - 8 && ct.d > ct.cut.hw - 3) { const dx = c.x - ct.px, dy = c.y - ct.py, d = ct.d || 1, nx = dx / d, ny = dy / d, push = d - (ct.cut.hw - 3); c.x -= nx * push; c.y -= ny * push; const vn = c.vx * nx + c.vy * ny; if (vn > 0) { c.vx -= 1.2 * vn * nx; c.vy -= 1.2 * vn * ny; c.vx *= 0.96; c.vy *= 0.96; if (vn > 120 && c.human) { this.shake = Math.max(this.shake, 2); Input.rumble(0.3, 0.4, 90); } } }
+    if (alat > lim && !ct) {
       const side = nr.lat > 0 ? 1 : -1, nx = nr.nx * side, ny = nr.ny * side; // outward normal
       const push = alat - lim; c.x -= nx * push; c.y -= ny * push;
       const vn = c.vx * nx + c.vy * ny;
@@ -251,7 +267,7 @@ export class Game {
     c.prevF = c.pos; c.accF += d; c.p = c.accF / N;
     // wrong way
     const tv = c.vx * this.T.tx[c.pos | 0] + c.vy * this.T.ty[c.pos | 0];
-    c.wrongWay = tv < -60 ? c.wrongWay + dt : Math.max(0, c.wrongWay - dt * 2);
+    c.wrongWay = tv < -60 && !c.onCut ? c.wrongWay + dt : Math.max(0, c.wrongWay - dt * 2);
     if (c.finished) return;
     if (c.accF >= (c.lap + 1) * N + FIN_OFF / this.T.step && this.state === 'racing') {
       c.lap++; const t = this.raceTime - c.lapStart; c.lapTimes.push(t); c.lapStart = this.raceTime;
@@ -514,6 +530,8 @@ export class Game {
             if (Math.abs(lx) < c.len * 0.52 && Math.abs(ly) < c.wid * 0.6) { hit = c; dead = true; break; }
           }
         }
+        if (!dead) for (const m of this.mines) { if (m.shot || Math.abs((m.z || 0) - ((p.z || 9) - 9)) > 25) continue; const dx = p.x - m.x, dy = p.y - m.y; if (dx * dx + dy * dy < 16 * 16) { m.shot = true; dead = true; break; } } // shoot mines to clear them
+        if (!dead && this.peds && (p.z || 9) < 30 && this.peds.shot(p.x, p.y, p.vx, p.vy, this.byId[p.owner])) dead = true;
         if (!dead && this.traffic && this.traffic.shot(p.x, p.y, (p.z || 9) - 9, p.type === 'rocket' || p.type === 'homing' ? 200 : p.type === 'cluster' || p.type === 'bomblet' ? 120 : 12, this.byId[p.owner])) dead = true;
         if (!dead) { const nr = nearest(T, p.x, p.y, p.idx, 8); p.idx = nr.f; if (Math.abs(nr.lat) > nr.hw + nr.wl && Math.abs(nr.z - ((p.z || 9) - 9)) < 30) { dead = true; p.wall = true; } }
       }
@@ -556,7 +574,8 @@ export class Game {
   stepMines(dt) {
     for (let i = this.mines.length - 1; i >= 0; i--) {
       const m = this.mines[i]; m.life -= dt; m.arm -= dt; let trig = null;
-      if (m.arm <= 0) for (const c of this.cars) {
+      if (m.shot) trig = { local: true, shot: true };
+      else if (m.arm <= 0) for (const c of this.cars) {
         if (c.dead || Math.abs((m.z || 0) - (c.z || 0)) > 25) continue; if (c.id === m.owner && m.arm > -1.5) continue;
         const dx = c.x - m.x, dy = c.y - m.y, r = WEAPONS.mine.r + c.wid * 0.3; if (dx * dx + dy * dy < r * r) { trig = c; break; }
       }
@@ -591,12 +610,14 @@ export class Game {
     let avoid = 0;
     for (const o of this.cars) { if (o === c || o.dead) continue; const dx = o.x - c.x, dy = o.y - c.y, d2 = dx * dx + dy * dy; if (d2 > 170 * 170) continue; const cs = Math.cos(c.a), sn = Math.sin(c.a), lx = dx * cs + dy * sn, ly = -dx * sn + dy * cs; if (lx > 0 && lx < 150 && Math.abs(ly) < 38) avoid += ly > 0 ? -1 : 1; }
     if (this.traffic) avoid += this.traffic.avoid(c);
+    if (this.hazards) { const rl = this.hazards.rampAhead(c); if (rl != null) { lane = rl; avoid = 0; } } // line up with the jump ramp
     const tgtHW = T.hw[((fi % N) + N) % N];
-    const tgt = pointAt(T, f + la, clamp(lane + avoid * 0.35, -0.8, 0.8) * tgtHW * 0.85);
+    let tgt = pointAt(T, f + la, clamp(lane + avoid * 0.35, -0.8, 0.8) * tgtHW * 0.85);
+    if (c.onCut) { const ct = onCut(T, c.x, c.y); if (ct) { const P = ct.cut.pts, q = Math.min(P.length - 1, Math.round(ct.k * (P.length - 1)) + 5); tgt = { x: P[q][0], y: P[q][1] }; } } // knocked onto a shortcut: follow it out
     const want = Math.atan2(tgt.y - c.y, tgt.x - c.x), err = angDiff(c.a, want);
     inp.steer = clamp(err * 2.6, -1, 1);
     // wall recovery
-    const edge = T.hw[(f | 0) % N] * 0.82; if (Math.abs(c.lat) > edge && Math.abs(c.lat) > 1) { const toC = c.lat > 0 ? -1 : 1; const cH = pointAt(T, f + 6, 0); const e2 = angDiff(c.a, cH.a); inp.steer = clamp(inp.steer * 0.5 + e2 * 1.5, -1, 1); }
+    const edge = T.hw[(f | 0) % N] * 0.82; if (!c.onCut && Math.abs(c.lat) > edge && Math.abs(c.lat) > 1) { const toC = c.lat > 0 ? -1 : 1; const cH = pointAt(T, f + 6, 0); const e2 = angDiff(c.a, cH.a); inp.steer = clamp(inp.steer * 0.5 + e2 * 1.5, -1, 1); }
     // speed
     let kmax = 0; const look = 8 + (sp / 12) | 0; for (let k = 0; k < look; k++) { const kk = Math.abs(T.curv[(((f | 0) + k) % N)]); if (kk > kmax) kmax = kk; }
     const mul = st.steer * 0.85; let vmax = 2.75 * mul / (kmax + 1.4 * mul / st.top); vmax = Math.min(vmax, st.top * skill * (c.nitroOn ? 1.3 : 1));
@@ -768,6 +789,7 @@ export class Game {
     for (const m of this.mines) if (high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
     if (this.traffic) this.traffic.drawLayer(g, v, 1);
     vcars.filter(c => c._L === 1).sort((a, b) => (a.z * 1000 + a.y) - (b.z * 1000 + b.y)).forEach(c => drawCar(g, v, c, this.time, carOpts(c)));
+    mk && mk('deckcars');
     if (T.hasTun) {
       // everything underground is drawn over the hill (which is see-through when you're inside) so it never flickers out of sight
       for (const it of this.items) if ((it.active || it.t === 'boost' || it.t === 'oil') && it.tn && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
@@ -777,12 +799,13 @@ export class Game {
         c.tunA = c.tunA == null ? t : c.tunA + (t - c.tunA) * Math.min(1, dt * 6); drawCar(g, v, c, this.time, carOpts(c, c.tunA));
       }
     }
+    mk && mk('tuncars');
     if (this.hazards) this.hazards.drawTop(g, v, this.time);
-    this.drawGantry(g);
-    for (const p of this.proj) if (v.visible(p.x, p.y, 40)) drawProjectile(g, v, p, this.time);
-    this.fx.draw(g, v);
+    this.drawGantry(g); mk && mk('top');
+    drawTracers(g, v, this.proj); for (const p of this.proj) if (p.type !== 'mg' && v.visible(p.x, p.y, 40)) drawProjectile(g, v, p, this.time);
+    mk && mk('proj'); this.fx.draw(g, v);
     mk && mk('fx+top');
-    if (this.night) { // headlight bloom over cars
+    if (this.night && !lowQ) { // headlight bloom over cars
       g.globalCompositeOperation = 'lighter';
       for (const c of this.cars) if (!c.dead && c.nitroOn) glow(g, v.sx(c.x), v.sy(c.y), 90 * v.zoom, '80,170,255', 0.3);
       g.globalCompositeOperation = 'source-over';

@@ -104,9 +104,16 @@ export const SYN = {
   warn(A, d) { A.tone({ f: 880, d: 0.09, type: 'square', g: 0.18, dest: d }); },
 };
 /** play a named sound; opts: vol (0..1), pan (-1..1), rate */
+const GAP = { gun: 0.07, hit: 0.06, scrape: 0.12, crash: 0.1, thud: 0.08, smallboom: 0.08, explosion: 0.09, mine: 0.1, rocket: 0.08, boost: 0.15, pickup: 0.06 }; // min seconds between repeats
 A.sfx = function (name, opts = {}) {
   if (!this.ready || this.vol.sfx <= 0) return;
   const vol = opts.vol ?? 1; if (vol < 0.02) return;
+  // a bunched-up pack can ask for well over a hundred sounds a second (every gun, scrape and bump); building that
+  // many synth voices stalls the main thread, so repeats of the same sound are merged and the total is capped
+  const now = this.ctx.currentTime, last = (this._last ||= {})[name];
+  if (last && now - last.t < (GAP[name] ?? 0.05) && vol <= last.v * 1.25) return;
+  this._win = now - (this._winT || 0) > 0.1 ? 0 : this._win || 0; if (!this._win) this._winT = now; if (++this._win > 7 && vol < 0.8) return; // at most ~7 new sounds per 100ms
+  this._last[name] = { t: now, v: vol };
   const buf = this.buffers['sfx_' + name];
   const d = this.ctx.createGain(); d.gain.value = vol; d.connect(this.out(opts.pan || 0));
   if (buf) { const s = this.ctx.createBufferSource(); s.buffer = buf; s.playbackRate.value = opts.rate || 1; s.connect(d); s.start(); return; }

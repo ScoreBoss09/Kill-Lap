@@ -72,15 +72,21 @@ export class Peds {
     const gr = this.game.ground; gr.blot(x, y, 20 * s, '#5c0606', 0.75); const r = Math.random;
     for (let k = 0; k < 7; k++) { const a = r() * TAU, d = (12 + r() * 34) * s; gr.blot(x + Math.cos(a) * d, y + Math.sin(a) * d, (3 + r() * 7) * s, '#6e0808', 0.7); }
   }
-  hit(p, q, c, sp) {
+  hit(p, q, c, sp, shot) {
     const g = this.game; p.deadUntil = g.raceTime + RESPAWN;
     this.flying.push({ x: q.x, y: q.y, vx: c.vx * 0.9 + (Math.random() - 0.5) * 120, vy: c.vy * 0.9 + (Math.random() - 0.5) * 120, vz: 160 + sp * 0.3, h: 4, a: Math.random() * TAU, w: (Math.random() - 0.5) * 24, t: 0.9, shirt: p.shirt, skin: p.skin });
     this.splat(q.x, q.y, 0.8);
     for (let k = 0; k < 14; k++) { const a = Math.random() * TAU, s = 60 + Math.random() * 220; g.fx.smoke(q.x, q.y, Math.cos(a) * s + c.vx * 0.3, Math.sin(a) * s + c.vy * 0.3, 2.5 + Math.random() * 3, 0.5 + Math.random() * 0.4, '150,8,8', 0.9); }
     for (let k = 0; k < 5; k++) g.fx.debris(q.x, q.y, c.vx * 0.4 + (Math.random() - 0.5) * 200, c.vy * 0.4 + (Math.random() - 0.5) * 200, Math.random() < 0.5 ? '#7a0a0a' : p.shirt);
-    g.snd('thud', q.x, q.y, 1); g.snd('scream', q.x, q.y, 0.7, 0.9 + Math.random() * 0.3); c.vx *= 0.96; c.vy *= 0.96;
-    g.feedAdd(c.name + ' ran someone over', '#ffb0a0');
-    if (c.human) { g.stats.roadkill = (g.stats.roadkill || 0) + 1; c.cash += 25; g.stats.cash += 25; g.msg('ROADKILL +$25', 0.9, '#ff6a5a'); Input.rumble(0.4, 0.9, 140); g.shake = Math.max(g.shake, 3); }
+    g.snd('thud', q.x, q.y, 1); g.snd('scream', q.x, q.y, 0.7, 0.9 + Math.random() * 0.3); if (!shot) { c.vx *= 0.96; c.vy *= 0.96; }
+    g.feedAdd(c.name + (shot ? ' gunned someone down' : ' ran someone over'), '#ffb0a0');
+    if (c.human) { g.stats.roadkill = (g.stats.roadkill || 0) + 1; if (!shot) c.cash += 25; g.stats.cash += 25; g.msg('ROADKILL +$25', 0.9, '#ff6a5a'); if (!shot) { Input.rumble(0.4, 0.9, 140); g.shake = Math.max(g.shake, 3); } }
+  }
+  /** a bullet or rocket at (x,y): returns true if it hit someone */
+  shot(x, y, vx, vy, by) {
+    const t = this.game.raceTime;
+    for (const p of this.list) { if (p.deadUntil > t || Math.abs(x - p.hx) > p.R || Math.abs(y - p.hy) > p.R) continue; const q = this.pos(p, t); if ((q.x - x) ** 2 + (q.y - y) ** 2 < 11 * 11) { this.hit(p, q, { x, y, vx: vx * 0.25, vy: vy * 0.25, name: by ? by.name : 'Someone', human: by && by.human, local: true, cash: 0 }, 260, true); if (by && by.human) { by.cash += 25; } return true; } }
+    return false;
   }
   draw(g, v) {
     const t = this.game.raceTime;

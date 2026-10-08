@@ -9,6 +9,7 @@ import Tex from './textures.js';
 
 export const TS = 512;
 /** props that animate (drawn every frame) or lie flat on the ground (baked into the ground layer, under the cars) */
+export const STREAM = 480;
 export const DYNAMIC = new Set(['lava']);
 const FLAT = new Set(['crater', 'dune']);
 const noiseCache = {};
@@ -183,6 +184,15 @@ export class Ground {
     if (q >= 1) { g.fillStyle = noisePattern(g, 'light'); g.fillRect(ox, oy, TS, TS); g.fillStyle = noisePattern(g, 'dark'); g.fillRect(ox, oy, TS, TS); }
     this.terrainFeatures(g, ox, oy, C);
     if (T.ocean) this.paintSea(g, ox, oy);
+    // streams under the humpback bridges
+    for (const h of T.humps || []) {
+      if (Math.abs(T.x[h] - ox - TS / 2) > TS / 2 + 560 || Math.abs(T.y[h] - oy - TS / 2) > TS / 2 + 560) continue;
+      const nx = -T.ty[h], ny = T.tx[h], tx = T.tx[h], ty = T.ty[h], path = new Path2D();
+      for (let k = -STREAM; k <= STREAM; k += 20) { const w = 26 * Math.sin(k / 90 + h) + 14 * Math.sin(k / 37); k === -STREAM ? path.moveTo(T.x[h] + nx * k + tx * w, T.y[h] + ny * k + ty * w) : path.lineTo(T.x[h] + nx * k + tx * w, T.y[h] + ny * k + ty * w); }
+      const wc = T.theme === 'volcano' ? '#e8521a' : T.theme === 'snow' ? '#a9d4e8' : th.water || '#3b82a8';
+      g.lineJoin = g.lineCap = 'round'; g.strokeStyle = shade(th.ground, -0.3); g.lineWidth = 64; g.stroke(path);
+      g.strokeStyle = wc; g.lineWidth = 46; g.stroke(path); g.strokeStyle = shade(wc, 0.25); g.globalAlpha = 0.5; g.lineWidth = 8; g.stroke(path); g.globalAlpha = 1; g.lineCap = 'butt';
+    }
     // verge
     this.ringPath(g, 0, 'v'); g.fillStyle = th.verge; g.fill(this.fillRule);
     { const vt = Tex.get('verge', T.theme); if (vt) { g.globalAlpha = 0.9; g.fillStyle = vt; g.fill(this.fillRule); g.globalAlpha = 1; } }
@@ -252,6 +262,17 @@ export class Ground {
       g.strokeStyle = shade(th.wall, -0.35); g.lineWidth = 12; g.save(); g.translate(0, 5); g.beginPath(); this.edge(g, side, 'w'); g.stroke(); g.restore();
       g.strokeStyle = th.wall; g.lineWidth = 11; g.beginPath(); this.edge(g, side, 'w'); g.stroke();
       g.strokeStyle = th.wallTop; g.lineWidth = 7; g.beginPath(); this.edge(g, side, 'w'); g.stroke();
+    }
+    // secret shortcuts: dirt tracks from the barrier gaps out across the scenery (the verge part is left as verge)
+    for (const c of T.cuts) {
+      if (c.box[2] < ox - 40 || c.box[0] > ox + TS + 40 || c.box[3] < oy - 40 || c.box[1] > oy + TS + 40) continue;
+      if (!c.runs) { c.runs = []; let run = null; for (const p of c.pts) { if (T.clearDist(p[0], p[1]) > 38) { if (!run) c.runs.push(run = []); run.push(p); } else run = null; } }
+      const path = new Path2D(); for (const r of c.runs) r.forEach(([x, y], k) => k ? path.lineTo(x, y) : path.moveTo(x, y));
+      const dirt = T.theme === 'snow' ? '#a9b4bc' : T.theme === 'city' || T.theme === 'industrial' ? '#55524c' : '#7a5c3c';
+      g.lineJoin = g.lineCap = 'round'; g.strokeStyle = shade(dirt, -0.25); g.lineWidth = c.hw * 2 + 8; g.stroke(path);
+      g.strokeStyle = dirt; g.lineWidth = c.hw * 2 - 4; g.stroke(path);
+      g.strokeStyle = shade(dirt, 0.12); g.lineWidth = c.hw * 0.9; g.stroke(path);
+      g.lineCap = 'butt';
     }
     g.restore();
     // 3D barriers, flyover shadows and flat scenery (craters, dunes) are baked into the ground layer with the screen's projection

@@ -6,6 +6,7 @@ import Audio from './audio.js';
 import Tex from './textures.js';
 import Input from './input.js';
 
+const JUMP_W = 54, MUD0 = -70, MUD1 = 300; // ramp width; mud band (along the road) around and after it
 const TRAIN_SPEED = 780, TRAIN_LEN = 650, WAVE_SPEED = 330;
 const SHIRTS = ['#d94a4a', '#3a7bd5', '#e6c229', '#3aa86a', '#9b59b6', '#e67e22', '#ecf0f1', '#16a085'];
 const SKIN = ['#f0d0b0', '#d8a070', '#a8714a', '#7a4f33'];
@@ -123,16 +124,24 @@ export class Hazards {
       }
     }
   }
+  /* jump: a narrow ramp in the middle of the road with a bog of thick mud either side and beyond it - take the ramp
+     at speed and you fly over the mud, miss it and you wallow through */
   updateJump(h) {
-    const g = this.game;
+    const g = this.game, RW = JUMP_W / 2;
     for (const c of g.cars) {
       if (c.dead) continue; const rx = c.x - h.x, ry = c.y - h.y, u = rx * h.tx + ry * h.ty, w = rx * h.nx + ry * h.ny, sp = Math.hypot(c.vx, c.vy);
-      const on = Math.abs(w) < 56 && u > -46 && u < 46 && (c.zAir || 0) < 1; // visibly riding up the ramp wedge (24 high)
+      const on = Math.abs(w) < RW && u > -46 && u < 46 && (c.zAir || 0) < 1; // visibly riding up the ramp wedge (24 high)
       if (on) { c.rampZ = 24 * clamp((u + 46) / 92, 0, 1); c.rampOwner = h.id; } else if (c.rampOwner === h.id) { c.rampZ = 0; c.rampOwner = null; }
       if (!c.local || c.zAir > 1) continue;
-      if (u > 22 && u < 62 && Math.abs(w) < 62 && sp > 150 && (c.vx * h.tx + c.vy * h.ty) / (sp || 1) > 0.45) { c.vz = 90 + sp * 0.34; c.zAir = 0.5; c.rampZ = 0; g.snd('boost', c.x, c.y, 0.6, 1.4); if (c.human) { g.hudFlash = 0.2; Input.rumble(0.5, 0.2, 100); } }
+      if (u > 22 && u < 62 && Math.abs(w) < RW + 4 && sp > 150 && (c.vx * h.tx + c.vy * h.ty) / (sp || 1) > 0.45) { c.vz = 90 + sp * 0.34; c.zAir = 0.5; c.rampZ = 0; g.snd('boost', c.x, c.y, 0.6, 1.4); if (c.human) { g.hudFlash = 0.2; Input.rumble(0.5, 0.2, 100); } continue; }
+      if (u > MUD0 && u < MUD1 && Math.abs(w) < h.hw + 30 && !on) { // in the mud
+        if (!(c.mudT > 0)) { g.snd('splash', c.x, c.y, 0.5, 0.6); if (c.human && !g.seenMud) { g.seenMud = true; g.msg('MUD! TAKE THE RAMP TO JUMP IT', 1.6, '#c8a06a'); } }
+        c.mudT = 0.15; if (g.quality > 0 && sp > 60 && Math.random() < 0.4) g.fx.smoke(c.x - Math.cos(c.a) * 14, c.y - Math.sin(c.a) * 14, (Math.random() - 0.5) * 90, (Math.random() - 0.5) * 90, 5, 0.5, '92,64,36', 0.75);
+      }
     }
   }
+  /** lateral offset bots should steer for to hit an upcoming ramp (null if none) */
+  rampAhead(c) { const N = this.T.N; for (const h of this.list) if (h.t === 'jump') { const d = (h.f - c.pos + N) % N; if (d > 2 && d < 45) return 0; } return null; }
 
   /* ---------------------------------------------------------------- lava */
   lavaState(h, t) { const ph = (t + h.off) % h.P; return ph < 4.5 ? 0 : ph < 6 ? 1 : ph < 7.8 ? 2 : 0; }
@@ -209,7 +218,7 @@ export class Hazards {
       if (h.t === 'train') { this.drawRails(g, v, h, time); continue; }
       if (h.t !== 'wave' && !v.visible(h.x, h.y, 220)) continue;
       if (false) 0; else if (h.t === 'cross') this.drawCrosswalk(g, v, h); else if (h.t === 'ford') this.drawFord(g, v, h, time);
-      else if (h.t === 'jump') this.drawRamp(g, v, h); else if (h.t === 'lava') this.drawLavaGlow(g, v, h, time); else if (h.t === 'wave') this.drawWave(g, v, h, time);
+      else if (h.t === 'jump') { this.drawMud(g, v, h, time); this.drawRamp(g, v, h); } else if (h.t === 'lava') this.drawLavaGlow(g, v, h, time); else if (h.t === 'wave') this.drawWave(g, v, h, time);
     }
     if (this.hasBomber) this.drawBombMarkers(g, v, time);
     // flattened pedestrians' bodies in flight
@@ -323,8 +332,22 @@ export class Hazards {
     if (!flat) { g.strokeStyle = p.shirt; g.lineWidth = 2.4; g.lineCap = 'round'; g.beginPath(); g.moveTo(0, -6); g.lineTo(sw, -9); g.moveTo(0, 6); g.lineTo(-sw, 9); g.stroke(); } else { g.strokeStyle = p.shirt; g.lineWidth = 2.4; g.beginPath(); g.moveTo(-5, -4); g.lineTo(-9, -9); g.moveTo(5, 4); g.lineTo(10, 9); g.stroke(); }
     g.restore();
   }
+  drawMud(g, v, h, time) { // a bog of thick mud with ragged edges and wet puddles; only the ramp gets you over it
+    const c = Math.cos(h.a), s = Math.sin(h.a), W = h.hw + 26, d = (u, w) => [v.sx(h.x + c * u - s * w), v.sy(h.y + s * u + c * w)], sd = h.seed % 97;
+    const blob = (inset, col) => { g.fillStyle = col; g.beginPath(); let k = 0;
+      const wob = t => (9 + inset * 0.3) * Math.sin(t * 0.09 + sd) + 5 * Math.sin(t * 0.23 + sd * 2);
+      for (let u = MUD0; u <= MUD1; u += 20, k++) { const [x, y] = d(u, -W + inset + wob(u)); k ? g.lineTo(x, y) : g.moveTo(x, y); }
+      for (let w = -W; w <= W; w += 20) { const [x, y] = d(MUD1 - inset - wob(w + 50), w); g.lineTo(x, y); }
+      for (let u = MUD1; u >= MUD0; u -= 20) { const [x, y] = d(u, W - inset - wob(u + 90)); g.lineTo(x, y); }
+      for (let w = W; w >= -W; w -= 20) { const [x, y] = d(MUD0 + inset + wob(w + 140), w); g.lineTo(x, y); }
+      g.closePath(); g.fill(); };
+    blob(0, '#6b4a2a'); blob(12, '#4e331b'); blob(30, '#3f2814');
+    for (let k = 0; k < 12; k++) { const u = MUD0 + 30 + ((k * 97 + h.seed) % (MUD1 - MUD0 - 60)), w = ((k * 53 + h.seed) % (2 * W - 50)) - W + 25, [x, y] = d(u, w), r = (12 + (k % 4) * 5) * v.zoom;
+      g.fillStyle = 'rgba(25,14,6,0.6)'; g.beginPath(); g.ellipse(x, y, r, r * 0.6, h.a + k, 0, TAU); g.fill();
+      g.fillStyle = 'rgba(190,170,140,0.28)'; g.beginPath(); g.ellipse(x - r * 0.25, y - r * 0.2, r * 0.45, r * 0.2, h.a + k, 0, TAU); g.fill(); } // wet sheen
+  }
   drawRamp(g, v, h) {
-    const L = 90, Wd = 112, H = 24, c = Math.cos(h.a), s = Math.sin(h.a), pt = (u, w, z) => [v.px(h.x + c * u - s * w, h.y + s * u + c * w, z), v.py(h.x + c * u - s * w, h.y + s * u + c * w, z)];
+    const L = 90, Wd = JUMP_W, H = 24, c = Math.cos(h.a), s = Math.sin(h.a), pt = (u, w, z) => [v.px(h.x + c * u - s * w, h.y + s * u + c * w, z), v.py(h.x + c * u - s * w, h.y + s * u + c * w, z)];
     const poly = (pts, col) => { g.fillStyle = col; g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fill(); };
     g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); for (const [u, w] of [[-L / 2, -Wd / 2], [L / 2, -Wd / 2], [L / 2, Wd / 2], [-L / 2, Wd / 2]]) g.lineTo(v.sx(h.x + c * u - s * w) + 10 * v.zoom, v.sy(h.y + s * u + c * w) + 8 * v.zoom); g.closePath(); g.fill();
     for (const sd of [-1, 1]) poly([pt(-L / 2, sd * Wd / 2, 0), pt(L / 2, sd * Wd / 2, 0), pt(L / 2, sd * Wd / 2, H)], sd > 0 ? '#7a5a30' : '#6a4d28'); // side wedges

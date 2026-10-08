@@ -236,7 +236,7 @@ const app = {
     g.strokeStyle = 'rgba(255,255,255,0.05)'; for (let i = 0; i < w; i += 30) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, hh); g.stroke(); }
     const v = new View(); v.W = w; v.H = hh; v.zoom = 3.3; v.x = 0; v.y = 0; const st = carStats(carId, upg);
     const car = { ...st, x: 22, y: -8, a: -0.4, color: paint || st.color, hp: 1, maxHp: 1, steerVis: 0.2, name: '', invuln: 0, dead: false, braking: false, vx: 0, vy: 0, turA: -0.4 + Math.sin(performance.now() / 700) * 0.8, guard: st.guardCharges };
-    drawCar(g, v, car, 0, {});
+    drawCar(g, v, car, 0, { live: true });
   },
 };
 window.KL = app; // debugging / automated tests

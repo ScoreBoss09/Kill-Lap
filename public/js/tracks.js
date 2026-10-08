@@ -42,7 +42,7 @@ function finish(id, name, theme, pts, o) {
   for (const [a, b, Z] of o.climb || []) for (let i = a; i <= b; i++) { const p = pts[((i % n) + n) % n], t = (i - a) / (b - a); p[2] = p[2] ?? null; p[3] = Math.max(p[3] || 0, Math.round(Z * Math.pow(Math.sin(Math.PI * t), 0.9))); }
   for (const [a, b] of o.banked || []) for (let i = a; i <= b; i++) { const p = pts[((i % n) + n) % n]; p[2] = p[2] ?? null; p[3] = p[3] || 0; p[4] = p[4] || 0; p[5] = 1; }
   for (const [a, b] of o.tun || []) for (let i = a; i <= b; i++) { const p = pts[((i % n) + n) % n]; p[2] = p[2] ?? null; p[3] = p[3] || 0; p[4] = 1; }
-  return { id, name, theme, pts, width: o.width || 150, laps: o.laps || 3, seed: o.seed || hashStr(id), author: 'Kill Lap', dens: o.dens, wv: o.wv, builtin: true, diff: o.diff || 2, bomber: !!o.bomber, tags: o.tags, bank: !!o.bank, lanes: o.lanes, traffic: o.traffic, haz: o.haz, peds: o.peds };
+  return { id, name, theme, pts, width: o.width || 150, laps: o.laps || 3, seed: o.seed || hashStr(id), author: 'Kill Lap', dens: o.dens, wv: o.wv, builtin: true, diff: o.diff || 2, bomber: !!o.bomber, tags: o.tags, bank: !!o.bank, lanes: o.lanes, traffic: o.traffic, haz: o.haz, peds: o.peds, humps: o.humps, cuts: o.cuts };
 }
 
 /** a mountain: flat start, switchbacks climbing to a summit, then a long banked descent back down to the start */
@@ -105,10 +105,20 @@ function findCrossings(pts, minGap = 1200) {
   return { out, L, sPt };
 }
 const circ = (a, b, L) => { const d = Math.abs(a - b) % L; return Math.min(d, L - d); };
+/** S-bend chicanes on straight stretches: nudge two neighbouring points to opposite sides */
+function addChicanes(pts, n) {
+  const P = pts.length, turn = i => { const a = pts[(i - 1 + P) % P], b = pts[i], c = pts[(i + 1) % P]; return Math.abs(Math.atan2((b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]), (b[0] - a[0]) * (c[0] - b[0]) + (b[1] - a[1]) * (c[1] - b[1]))); };
+  for (let i = 4, made = 0; i < P - 6 && made < n; i++) {
+    if (![i - 1, i, i + 1, i + 2].every(j => turn(j) < 0.14)) continue;
+    const a = pts[i - 1], c = pts[i + 2], dx = c[0] - a[0], dy = c[1] - a[1], l = Math.hypot(dx, dy) || 1, nx = -dy / l, ny = dx / l, C = 75;
+    pts[i][0] += Math.round(nx * C); pts[i][1] += Math.round(ny * C); pts[i + 1][0] -= Math.round(nx * C); pts[i + 1][1] -= Math.round(ny * C);
+    made++; i += Math.floor(P / (n + 1));
+  }
+}
 function weave(id, name, theme, o) {
   const Zb = o.bridge || 72; let best = null;
   for (let k = 0; k < 36 && !best; k++) {
-    const phase = (o.ph || 0) + (k * TAU) / 36, pts = knotPts(o, phase), { out, L, sPt } = findCrossings(pts);
+    const phase = (o.ph || 0) + (k * TAU) / 36, pts = knotPts(o, phase); addChicanes(pts, o.chicanes ?? 2); const { out, L, sPt } = findCrossings(pts);
     if (!out.length || out.some(c => c.ang < 0.5 || circ(c.sa, 0, L) < 1500 || circ(c.sb, 0, L) < 1500)) continue;
     // choose which pass is the flyover so the road alternates over/under
     const up = [], down = [];
@@ -124,7 +134,7 @@ function weave(id, name, theme, o) {
     best = pts;
   }
   if (!best) best = knotPts(o, 0);
-  return finish(id, name, theme, best, { ...o, tags: [...(o.tags || []), 'crossover'] });
+  return finish(id, name, theme, best, { wv: 0.22, humps: 1, cuts: 1, ...o, tags: [...(o.tags || []), 'crossover'] });
 }
 function pts(id, name, theme, p, o = {}) { return finish(id, name, theme, p, o); }
 
@@ -222,7 +232,8 @@ export function compileTrack(data, opts = {}) {
   for (let i = -16; i <= 16; i++) { const q = ((i % N) + N) % N, f = Math.abs(i) / 16; z[q] *= f * f * (3 - 2 * f); if (Math.abs(i) < 10) tn[q] = 0; }
   // optional width variation
   const wv = data.wv != null ? data.wv : 0;
-  if (wv) for (let i = 0; i < N; i++) hw[i] *= 1 + wv * Math.sin((i / N) * TAU * 3 + (data.seed || 0));
+  if (wv) for (let i = 0; i < N; i++) { const th = (i / N) * TAU, s = data.seed || 0; hw[i] *= 1 + wv * (0.6 * Math.sin(th * 3 + s) + 0.4 * Math.sin(th * 7 + s * 2.3)); } // narrow squeezes and wide sweeps
+  for (let i = -18; i <= 18; i++) { const q = ((i % N) + N) % N; hw[q] = Math.max(hw[q], baseW / 2); } // the start grid keeps full width
   // shift into positive space
   let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
   for (let i = 0; i < N; i++) { const e = hw[i] + VERGE + 20; minX = Math.min(minX, x[i] - e); maxX = Math.max(maxX, x[i] + e); minY = Math.min(minY, y[i] - e); maxY = Math.max(maxY, y[i] + e); }
@@ -248,6 +259,15 @@ export function compileTrack(data, opts = {}) {
   const sm = new Float32Array(N);
   for (let i = 0; i < N; i++) { let s = 0; for (let k = -3; k <= 3; k++) s += curv[(i + k + N) % N]; sm[i] = s / 7; }
   curv.set(sm);
+  // humpback bridges: a short steep hump over a stream on a straight, well away from everything else
+  const humps = [];
+  for (let k = 0, tries = 0, want = data.humps || 0, r = mulberry32((data.seed || 7) ^ 0x4b1d); humps.length < want && tries < 300; tries++) {
+    const i = Math.floor(N * (0.18 + r() * 0.7)); let ok = true;
+    for (let q = -24; q <= 24 && ok; q++) { const j = (i + q + N) % N; if (Math.abs(curv[j]) > 0.0009 || z[j] > 1 || tn[j]) ok = false; }
+    for (let j = 0; j < N && ok; j += 3) { const dj = Math.min(Math.abs(j - i), N - Math.abs(j - i)); if (dj > 60 && Math.hypot(x[j] - x[i], y[j] - y[i]) < 620) ok = false; }
+    if (!ok || humps.some(h => Math.min(Math.abs(h - i), N - Math.abs(h - i)) < N * 0.2)) continue;
+    humps.push(i); for (let q = -13; q <= 13; q++) { const j = (i + q + N) % N, f = Math.cos((q / 13) * Math.PI / 2); z[j] = Math.max(z[j], 38 * f * f); }
+  }
 
   // banking: tilt the road across its width on curves (outer edge higher) and lift banked curves gently off the ground
   const flatW = new Float32Array(N).fill(1); for (let i = -16; i <= 16; i++) { const q = ((i % N) + N) % N, f = Math.abs(i) / 16; flatW[q] = f * f * (3 - 2 * f); }
@@ -263,7 +283,7 @@ export function compileTrack(data, opts = {}) {
     elev[i] = z[i] >= ELEV_T ? 1 : 0; if (elev[i]) hasElev = true; if (tn[i]) hasTun = true;
   }
   const T = {
-    z, tn, wl, elev, hasElev, hasTun, tilt, grade, hazards: [], bomber: false, ocean,
+    z, tn, wl, elev, hasElev, hasTun, tilt, grade, hazards: [], bomber: false, ocean, humps, cuts: [],
     data, id: data.id, name: data.name, theme: data.theme in THEMES ? data.theme : 'desert', th: null, N, step, length: total, x, y, hw, tx, ty, ang, curv, W, H, ox, oy,
     laps: data.laps || 3, seed: data.seed || hashStr(data.id || 'x'), start: null, props: [], items: [],
   };
@@ -273,6 +293,7 @@ export function compileTrack(data, opts = {}) {
   T.maxHW = 0; for (let i = 0; i < N; i++) T.maxHW = Math.max(T.maxHW, hw[i]);
   if (opts.light) return T;
   T.clearDist = makeClear(T);
+  if (data.cuts) makeCuts(T, data.cuts);
   const itemsAll = items0.map(it => ({ ...it, x: it.x + ox, y: it.y + oy }));
   placeItems(T, itemsAll.filter(it => !HAZ_TYPES.includes(it.t)));
   placeHazards(T, itemsAll.filter(it => HAZ_TYPES.includes(it.t)));
@@ -322,7 +343,7 @@ function placeItems(T, custom) {
   const N = T.N, items = [];
   const auto = T.data.auto !== false;
   if (auto) {
-    const count = Math.max(6, Math.round(T.length / 1500));
+    const count = Math.max(10, Math.round(T.length / 750)); // plenty of pickups round the lap
     const types = ['repair', 'ammo', 'cash', 'nitro', 'cash', 'ammo'];
     for (let k = 0; k < count; k++) {
       const i = Math.floor(((k + 0.5) / count) * N + (rng() - 0.5) * 6);
@@ -347,6 +368,7 @@ function placeItems(T, custom) {
       }
     }
   }
+  for (const c of T.cuts) { const [x, y] = c.pts[c.pts.length >> 1]; items.push({ t: 'nitro', x, y, z: 0 }); } // a reward for finding the shortcut
   for (const c of custom) {
     const it = { t: c.t, x: c.x, y: c.y }; if (c.a != null) it.a = c.a;
     if (['repair', 'ammo', 'cash', 'nitro', 'boost', 'oil'].includes(it.t)) {
@@ -367,15 +389,21 @@ function placeHazards(T, custom) {
   const th = { ...(THEME_HAZ[T.theme] || {}), ...(T.data.haz || {}) };
   const flat = (i, span, lim) => { for (let q = -span; q <= span; q++) { const k = (i + q + N) % N; if (Math.abs(T.curv[k]) > lim || T.z[k] >= ELEV_T || T.tn[k]) return false; } return true; };
   const underDeck = i => { for (let k = 0; k < N; k += 2) { const dk = Math.min(Math.abs(k - i), N - Math.abs(k - i)); if (dk > 30 && T.z[k] >= 40 && Math.hypot(T.x[k] - T.x[i], T.y[k] - T.y[i]) < 460) return true; } return false; };
+  const cd = (a, b) => { const d = Math.abs(a - b) % N; return Math.min(d, N - d); };
+  const busy = (i, type) => T.humps.some(h => type === 'jump' ? cd(h, i + 8) < 44 : cd(h, i) < 28) || T.cuts.some(c => cd(c.iA, i) < 24 || cd(c.iB, i) < 24);
   const far = (x, y, d, type) => !out.some(h => Math.hypot(h.x - x, h.y - y) < (h.t === type ? d : 520)) && !T.items.some(it => (it.t === 'boost' || it.t === 'oil') && Math.hypot(it.x - x, it.y - y) < 160);
   if (T.data.hazards !== false) for (const [type, count] of Object.entries(th)) {
     let placed = 0;
-    for (let tries = 0; tries < 600 && placed < count; tries++) {
+    for (let tries = 0; tries < 1500 && placed < count; tries++) {
       const i = Math.floor(N * (0.14 + rng() * 0.78));
-      const span = type === 'wave' ? 9 : type === 'train' || type === 'xroad' ? 9 : type === 'cross' ? 6 : type === 'lava' ? 3 : 10, lim = type === 'lava' ? 0.01 : type === 'wave' || type === 'cross' ? 0.0011 : type === 'train' || type === 'xroad' ? 0.0009 : 0.0007;
-      if (!flat(i, span, lim) || underDeck(i) || !far(T.x[i], T.y[i], type === 'cross' ? 1500 : type === 'train' ? 2200 : type === 'xroad' ? 1500 : 1100, type)) continue;
+      const span = type === 'wave' ? 9 : type === 'train' || type === 'xroad' ? 9 : type === 'cross' ? 6 : type === 'lava' ? 3 : 10, lim = type === 'lava' ? 0.01 : type === 'wave' || type === 'cross' ? 0.0013 : type === 'train' || type === 'xroad' ? 0.0011 : 0.0009;
+      if (type === 'jump' ? !flat(i + 8, 17, lim) : !flat(i, span, lim)) continue; // the jump's mud runs on well past the ramp
+      if (busy(i, type)) continue;
+      if (underDeck(i) || !far(T.x[i], T.y[i], type === 'cross' ? 1500 : type === 'train' ? 2200 : type === 'xroad' ? 1500 : 1100, type)) continue;
       if (type === 'wave' && T.ocean) { const dist = -oceanAt(T, T.x[i], T.y[i]); if (dist < 500 || dist > 2700) continue; }
-      const p = pointAt(T, i, 0); const hz = { t: type, x: p.x, y: p.y, a: p.a, hw: T.hw[i], f: i, seed: Math.floor(rng() * 1e6), side: rng() < 0.5 ? 1 : -1 }; if (type === 'train') { if (!setupRail(T, hz, true)) continue; } if (type === 'xroad') { if (!setupXroad(T, hz)) continue; } out.push(hz); placed++;
+      const p = pointAt(T, i, 0); const hz = { t: type, x: p.x, y: p.y, a: p.a, hw: T.hw[i], f: i, seed: Math.floor(rng() * 1e6), side: rng() < 0.5 ? 1 : -1 }; if (type === 'train') { if (!setupRail(T, hz, true)) continue; } if (type === 'xroad') { if (!setupXroad(T, hz)) continue; }
+      if ((type === 'train' || type === 'xroad') && hz.rx != null && (T.cuts.some(c => c.pts.some(([x, y]) => corridorDist(hz, x, y) < c.hw + 90)) || T.humps.some(h => { for (let k = -480; k <= 480; k += 60) if (corridorDist(hz, T.x[h] - T.ty[h] * k, T.y[h] + T.tx[h] * k) < 110) return true; return false; }))) continue; // rails / side roads stay clear of shortcuts and streams
+      out.push(hz); placed++;
     }
   }
   for (const c of custom) {
@@ -397,6 +425,7 @@ function placeHazards(T, custom) {
   for (const h of out) if ((h.t === 'train' || h.t === 'xroad') && h.rx != null) for (let i = 0; i < N; i++) for (const [s, bit] of [[-1, 1], [1, 2]]) {
     const p = pointAt(T, i, s * (T.hw[i] + VERGE)); if (corridorDist(h, p.x, p.y) < (h.t === 'xroad' ? 50 : 54)) T.wallGap[i] |= bit;
   }
+  for (const c of T.cuts) for (const [i0, s] of [[c.iA, c.sA], [c.iB, c.sB]]) for (let q = -4; q <= 4; q++) T.wallGap[(i0 + q + N) % N] |= s < 0 ? 1 : 2; // gaps in the barrier where shortcuts join
   if (T.data.bomber || (T.th.bomber && T.data.hazards !== false)) T.bomber = true;
   T.hazards = out.map((h, k) => ({ ...h, id: k }));
 }
@@ -464,6 +493,42 @@ export function corridorDist(h, x, y) {
   const u = (x - h.x) * h.rx + (y - h.y) * h.ry; return u < h.u0 - 160 || u > h.u1 + 160 ? Infinity : w;
 }
 
+/** Secret shortcuts: a narrow dirt track through the scenery that cuts across a big loop of the circuit. The barrier
+ *  has a gap at each end (hidden by a couple of bushes). Cars on it are tracked as if they were on the main road. */
+function makeCuts(T, want) {
+  const N = T.N, r = mulberry32((T.seed ^ 0xc075) >>> 0);
+  for (let tries = 0; T.cuts.length < want && tries < 1500; tries++) {
+    const iA = Math.floor(N * (0.12 + r() * 0.62)), m = Math.floor(N * (0.1 + r() * 0.22)), iB = (iA + m) % N;
+    if (iB < 30 || iA > N - 60) continue;
+    const ax = T.x[iA], ay = T.y[iA], bx = T.x[iB], by = T.y[iB], dist = Math.hypot(bx - ax, by - ay);
+    if (dist < 420 || dist > 1500 || m * T.step < dist * 2.3) continue;
+    let ok = true; for (const i of [iA, iB]) for (let q = -8; q <= 8; q++) { const j = (i + q + N) % N; if (T.z[j] > 8 || T.tn[j] || Math.abs(T.curv[j]) > 0.0022) ok = false; } if (!ok) continue;
+    const sA = Math.sign(T.tx[iA] * (by - ay) - T.ty[iA] * (bx - ax)) || 1, sB = Math.sign(T.tx[iB] * (ay - by) - T.ty[iB] * (ax - bx)) || 1;
+    const p0 = pointAt(T, iA, sA * (T.hw[iA] - 12)), p3 = pointAt(T, iB, sB * (T.hw[iB] - 12));
+    const q1 = pointAt(T, iA, sA * (T.hw[iA] + 260)), q2 = pointAt(T, iB, sB * (T.hw[iB] + 260)); // leave square to the road, then curve across
+    const pts = []; const L = Math.hypot(q1.x - p0.x, q1.y - p0.y) + Math.hypot(q2.x - q1.x, q2.y - q1.y) + Math.hypot(p3.x - q2.x, p3.y - q2.y), n = Math.max(20, Math.ceil(L / 14));
+    for (let k = 0; k <= n; k++) { const s = k / n, u = 1 - s; pts.push([u * u * u * p0.x + 3 * u * u * s * q1.x + 3 * u * s * s * q2.x + s * s * s * p3.x, u * u * u * p0.y + 3 * u * u * s * q1.y + 3 * u * s * s * q2.y + s * s * s * p3.y]); }
+    const hw = 34; // keep it clear of every other road, tunnels, flyovers, rails and the sea
+    for (let k = 0; k <= n && ok; k++) { const [x, y] = pts[k], dEnd = Math.min(k, n - k) * (L / n); if (x < 60 || y < 60 || x > T.W - 60 || y > T.H - 60) ok = false; else if (dEnd > T.hw[iA] + 120 && T.clearDist(x, y) < hw + 70) ok = false; else if (T.ocean && oceanAt(T, x, y) > -80) ok = false; }
+    if (!ok) continue;
+    for (let j = 0; j < N && ok; j += 2) if ((T.z[j] >= 30 || T.tn[j]) && pts.some(([x, y]) => Math.hypot(x - T.x[j], y - T.y[j]) < T.hw[j] + 160)) ok = false;
+    if (!ok || T.cuts.some(c => Math.hypot(c.pts[0][0] - p0.x, c.pts[0][1] - p0.y) < 900)) continue;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    T.cuts.push({ iA, iB, sA, sB, span: m, pts, hw, box: [x0 - hw, y0 - hw, x1 + hw, y1 + hw] });
+  }
+}
+/** if (x,y) is on a shortcut's dirt track: { cut, k (fraction 0..1), lat } */
+export function onCut(T, x, y, slack = 10) {
+  for (const c of T.cuts) { if (x < c.box[0] || y < c.box[1] || x > c.box[2] || y > c.box[3]) continue; let bd = 1e18, bk = 0; const P = c.pts, n = P.length - 1;
+    for (let k = 0; k <= n; k += 2) { const d = (x - P[k][0]) ** 2 + (y - P[k][1]) ** 2; if (d < bd) { bd = d; bk = k; } }
+    if (bd > (c.hw + 40) ** 2) continue;
+    let best = null; // refine: project onto the segments either side of the closest vertex
+    for (let k = Math.max(0, bk - 2); k < Math.min(n, bk + 2); k++) { const ax = P[k][0], ay = P[k][1], ex = P[k + 1][0] - ax, ey = P[k + 1][1] - ay; let t = ((x - ax) * ex + (y - ay) * ey) / (ex * ex + ey * ey || 1); t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = ax + ex * t, py = ay + ey * t, d = Math.hypot(x - px, y - py); if (!best || d < best.d) best = { cut: c, k: (k + t) / n, d, px, py }; }
+    if (best && best.d < c.hw + slack) return best; }
+  return null;
+}
+
 /** Distance from a world point to the nearest road edge (negative on tarmac). Uses a coarse spatial hash. */
 function makeClear(T) {
   const cell = 160, gw = Math.ceil(T.W / cell) + 1, grid = new Map();
@@ -499,6 +564,8 @@ function placeProps(T, custom) {
   const nearDeck = (x, y, r) => deckPts.some(i => Math.hypot(T.x[i] - x, T.y[i] - y) < T.hw[i] + r);
   const nearTun = (x, y, r) => tunPts.some(i => Math.hypot(T.x[i] - x, T.y[i] - y) < T.hw[i] + r);
   const nearRail = (x, y, r = 135) => T.hazards.some(h => (h.t === 'train' || h.t === 'xroad') && corridorDist(h, x, y) < r + (h.t === 'xroad' ? 30 : 0));
+  const nearCut = (x, y, r) => T.cuts.some(c => x > c.box[0] - r && y > c.box[1] - r && x < c.box[2] + r && y < c.box[3] + r && c.pts.some(([px, py]) => Math.hypot(px - x, py - y) < c.hw + r));
+  const nearStream = (x, y, r) => T.humps.some(h => { const dx = x - T.x[h], dy = y - T.y[h], u = -dx * T.ty[h] + dy * T.tx[h], w = dx * T.tx[h] + dy * T.ty[h]; return Math.abs(u) < 500 + r && Math.abs(w) < 75 + r; });
   const grid = new Map(), CELL = 160, gk = (x, y) => Math.floor(x / CELL) + ',' + Math.floor(y / CELL);
   const gauss = () => (rng() + rng() + rng() - 1.5) / 1.5;
   const radius = p => BIG_PROPS.has(p.type) ? (p.al ? Math.min(p.w, p.d) * 0.58 : Math.hypot(p.w || 110, p.d || 100) / 2) : p.type === 'dune' ? 70 : p.type === 'lava' ? 46 : (['pine', 'oak', 'snowpine', 'palm'].includes(p.type) ? 22 : 15) * p.s;
@@ -512,6 +579,8 @@ function placeProps(T, custom) {
     if (tunPts.length && nearTun(p.x, p.y, 110 + rad + (tall ? 80 : 0))) return no('tun');
     if (deckPts.length && nearDeck(p.x, p.y, 80 + rad + (tall ? 120 : 0))) return no('deck');
     if (nearRail(p.x, p.y, 110 + rad + (tall ? 40 : 0))) return no('rail');
+    if (T.cuts.length && nearCut(p.x, p.y, 30 + rad)) return no('cut');
+    if (T.humps.length && nearStream(p.x, p.y, rad)) return no('stream');
     const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
     for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) { const l = grid.get((cx + a) + ',' + (cy + b)); if (l) for (const q of l) if (Math.hypot(q.x - p.x, q.y - p.y) < (q._r + rad) * (big || BIG_PROPS.has(q.type) ? 1.0 : 0.72)) return no('hit'); }
     return true;
@@ -577,13 +646,16 @@ function placeProps(T, custom) {
     const c = Math.abs(T.curv[i]); if (T.elev[i] || T.tn[i]) continue;
     if (c > 0.0011 && i % 5 === 0) {
       const side = T.curv[i] > 0 ? -1 : 1; // outside of the corner
-      const p = pointAt(T, i, side * (T.hw[i] + VERGE + 14)); if (nearRail(p.x, p.y)) continue;
+      const p = pointAt(T, i, side * (T.hw[i] + VERGE + 14)); if (nearRail(p.x, p.y) || nearCut(p.x, p.y, 40)) continue;
       props.push({ type: 'tyres', x: p.x, y: p.y, s: 1, r: p.a, v: rng() });
     } else if (th.night && i % 22 === 0) {
-      const p = pointAt(T, i, (i % 44 ? 1 : -1) * (T.hw[i] + VERGE + 30)); if (nearRail(p.x, p.y)) continue;
+      const p = pointAt(T, i, (i % 44 ? 1 : -1) * (T.hw[i] + VERGE + 30)); if (nearRail(p.x, p.y) || nearCut(p.x, p.y, 40)) continue;
       props.push({ type: 'lamp', x: p.x, y: p.y, s: 1, r: 0, v: rng() });
     }
   }
+  // shortcut entrances: a bit of cover either side of each barrier gap so they're easy to miss
+  const HIDE = { forest: 'oak', snow: 'snowpine', desert: 'cactus', coast: 'palm', city: 'barrels', industrial: 'barrels', volcano: 'rock', mesa: 'rock', warzone: 'sandbags', highway: 'oak' };
+  for (const c of T.cuts) for (const [i0, s] of [[c.iA, c.sA], [c.iB, c.sB]]) for (const d of [-7, 7]) { const j = (i0 + d + N) % N, p = pointAt(T, j, s * (T.hw[j] + T.wl[j] + 34)); props.push({ type: HIDE[T.theme] || 'rock', x: p.x, y: p.y, s: 1.15, r: rng() * TAU, v: rng() }); }
   for (const c of custom) props.push({ type: c.type || c.t, x: c.x, y: c.y, s: c.s || 1, r: c.r || 0, v: rng(), w: c.w, d: c.d, h: c.h, custom: true });
   for (const p of props) { delete p._r; if (BIG_PROPS.has(p.type) && !p.w) { p.w = 110; p.d = 100; p.h = 110; } }
   T.props = props;
