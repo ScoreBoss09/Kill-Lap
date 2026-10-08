@@ -5,12 +5,31 @@ import { Hazards } from './hazards.js';
 import { makeVis, drawWalls, drawDecks, drawDeckShadows, drawTunnels } from './structures.js';
 import { carStats, CAR_BY_ID, WEAPONS, DIFFICULTIES, AI_NAMES } from './cars.js';
 import { Ground, gridPos, makeMinimap } from './ground.js';
-import { View, drawProp, drawProp2Glow, drawItem, drawCar, drawProjectile, drawMine, Particles } from './sprites.js';
+import { View, drawProp, drawProp2Glow, drawItem, drawCar, drawProjectile, drawMine, Particles, glow } from './sprites.js';
 import Audio from './audio.js';
 import Input from './input.js';
 
 const FIXED = 1 / 60;
+export const AQUAPLANE = 330; // px/s (about 119 km/h): above this, water has no effect
 const PICKUP_R = 30, RESPAWN_ITEM = 14, FIN_OFF = 22; // FIN_OFF: lap counts once the car centre clears the far edge of the checkered band
+
+const CLOUDS = [];
+/** soft irregular cloud shadow (two variants, built once) */
+function cloudSprite(k) {
+  if (CLOUDS[k]) return CLOUDS[k]; const c = document.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'), r = mulberry32(77 + k * 13);
+  for (let i = 0; i < 9; i++) { const cx = 70 + r() * 116, cy = 70 + r() * 116, rad = 40 + r() * 60, gr = x.createRadialGradient(cx, cy, 0, cx, cy, rad); gr.addColorStop(0, 'rgba(10,20,30,0.55)'); gr.addColorStop(1, 'rgba(10,20,30,0)'); x.fillStyle = gr; x.fillRect(0, 0, 256, 256); }
+  return (CLOUDS[k] = c);
+}
+
+/** per-sample lookups used to pick each car's draw layer (built once per track) */
+function buildLayerInfo(T) {
+  const N = T.N, elevNear = new Uint8Array(N), tnNear = new Uint8Array(N), tnDepth = new Uint8Array(N);
+  for (let i = 0; i < N; i++) { if (T.elev[i]) for (let k = -3; k <= 3; k++) elevNear[(i + k + N) % N] = 1; if (T.tn[i]) for (let k = -9; k <= 9; k++) tnNear[(i + k + N) % N] = 1; }
+  if (T.hasTun) for (let i = 0; i < N; i++) if (T.tn[i]) { let d = 0; while (d < 60 && T.tn[(i + d) % N] && T.tn[(i - d + N) % N]) d++; tnDepth[i] = d; }
+  const cell = 128, grid = new Map(); for (let i = 0; i < N; i++) if (T.z[i] >= 30) { const k = Math.floor(T.x[i] / cell) + ',' + Math.floor(T.y[i] / cell); (grid.get(k) || grid.set(k, []).get(k)).push(i); }
+  const underDeck = (x, y) => { const cx = Math.floor(x / cell), cy = Math.floor(y / cell); for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const l = grid.get((cx + a) + ',' + (cy + b)); if (l) for (const i of l) if (Math.hypot(T.x[i] - x, T.y[i] - y) < T.hw[i] + T.wl[i] + 8) return true; } return false; };
+  return { elevNear, tnNear, tnDepth, underDeck };
+}
 
 export class Game {
   /**
@@ -23,7 +42,7 @@ export class Game {
     this.diff = DIFFICULTIES[clamp(opts.diff ?? 1, 0, 3)]; this.diffIdx = clamp(opts.diff ?? 1, 0, 3);
     this.settings = opts.settings || {}; this.quality = this.settings.quality ?? 2;
     this.ground = new Ground(this.T, this.quality); this.mini = makeMinimap(this.T);
-    this.view = new View(); this.view.quality = this.quality; this.fx = new Particles(); this.fx.max = [180, 380, 650][this.quality] ?? 650;
+    this.view = new View(); this.view.quality = this.quality; this.fx = new Particles(); this.fx.max = [160, 320, 480][this.quality] ?? 480;
     this.time = 0; this.raceTime = 0; this.acc = 0; this.state = 'countdown'; this.cd = this.mode === 'attract' ? 0.5 : 3.6; this.lastCdBeep = 4;
     this.cars = []; this.byId = {}; this.proj = []; this.mines = []; this.feed = []; this.msgs = [];
     this.rng = mulberry32(opts.seed || 1); this.nextId = 1; this.netT = 0; this.over = false; this.results = null; this.overT = 0;
@@ -159,8 +178,11 @@ export class Game {
     // the car slide when it is turned hard, overloaded by nitro, on grass, on oil, or on the handbrake).
     const cs2 = Math.cos(c.a), sn2 = Math.sin(c.a);
     let vf2 = c.vx * cs2 + c.vy * sn2 + (vf - vf0), vl = -c.vx * sn2 + c.vy * cs2;
-    const G = 1000 * st.grip * (inp.hb ? 0.3 : 1) * (off ? 0.7 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.92 : 1) * (air ? 0 : 1) * (c.waterT > 0 ? 0.55 : 1) * (c.bankGrip || 1);
-    if (c.waterT > 0 && !air) vf2 -= vf2 * 1.15 * dt;
+    // aquaplaning: hit water fast enough and the car skims straight across it with no drag or grip loss
+    const wet = c.waterT > 0 && !air, aqua = wet && Math.abs(vf2) >= AQUAPLANE;
+    if (aqua) { c.aquaT = 0.25; if (c.human && !this.seenAqua) { this.seenAqua = true; this.msg('AQUAPLANING!', 1.2, '#7fe6ff'); } if (this.quality > 0 && Math.random() < 0.3) for (const s of [-1, 1]) this.fx.smoke(c.x - cs2 * c.len * 0.45 - sn2 * s * c.wid * 0.45, c.y - sn2 * c.len * 0.45 + cs2 * s * c.wid * 0.45, -c.vx * 0.25 - sn2 * s * 90, -c.vy * 0.25 + cs2 * s * 90, 6, 0.45, '225,245,255', 0.6); }
+    const G = 1000 * st.grip * (inp.hb ? 0.3 : 1) * (off ? 0.7 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.92 : 1) * (air ? 0 : 1) * (wet && !aqua ? 0.55 : 1) * (c.bankGrip || 1);
+    if (wet && !aqua) vf2 -= vf2 * 1.15 * dt;
     const dv = clamp(-vl * 9, -G, G) * dt;
     vl += Math.abs(dv) > Math.abs(vl) ? -vl : dv;
     if (inp.hb) vf2 -= vf2 * 0.3 * dt;
@@ -637,25 +659,26 @@ export class Game {
 
   /* ---------------------------------------------------------------- audio each frame */
   updateAudio(dt) {
-    if (!Audio.ready || this.mode === 'attract') return;
-    let skid = 0;
+    if (!Audio.ready || this.mode === 'attract' || this.silenced) return;
+    let skid = 0; const target = this.quiet ? 0 : 1; this.engVol = this.engVol == null ? 1 : this.engVol + (target - this.engVol) * Math.min(1, dt * 3); // engines fade out once the race is over
     for (const c of this.cars) {
-      if (c.dead) { if (c.voice) c.voice.update(0, 0, 0, 0); continue; }
+      if (c.dead || this.engVol < 0.01) { if (c.voice) c.voice.update(0, 0, 0, 0); continue; }
       if (!c.voice) c.voice = Audio.engine();
       if (!c.voice) continue;
-      const dx = c.x - this.cam.x, dy = c.y - this.cam.y, d = Math.hypot(dx, dy), vol = clamp(1 - d / 1300, 0, 1) * (c.human ? 1.2 : 0.8);
+      const dx = c.x - this.cam.x, dy = c.y - this.cam.y, d = Math.hypot(dx, dy), vol = clamp(1 - d / 1300, 0, 1) * (c.human ? 1.2 : 0.8) * this.engVol;
       const sp = Math.hypot(c.vx, c.vy) / c.stats.top;
       c.voice.update(clamp(sp, 0, 1.1), c.input.throttle > 0.1 || (c.remote && sp > 0.2), vol * vol, clamp(dx / 700, -0.9, 0.9), c.nitroOn);
       if (c.slip > 95 && c.surface === 'road') skid = Math.max(skid, (c.slip - 80) / 220 * vol);
     }
-    Audio.setSkid(skid);
+    Audio.setSkid(skid * this.engVol);
   }
-  destroy() { for (const c of this.cars) if (c.voice) { c.voice.stop(); c.voice = null; } Audio.setSkid(0); }
+  destroy() { this.silenced = true; for (const c of this.cars) if (c.voice) { c.voice.stop(); c.voice = null; } Audio.setSkid(0); }
 
   /* ---------------------------------------------------------------- render */
   render(g, W, H, dt) {
     const v = this.view, T = this.T, th = T.th;
     v.W = W; v.H = H; v.t = this.time;
+    const PF = this.prof, mk = PF ? n => { g.getImageData(0, 0, 1, 1); const t = performance.now(); PF[n] = (PF[n] || 0) + t - this._pt; this._pt = t; } : null; if (PF) { g.getImageData(0, 0, 1, 1); this._pt = performance.now(); }
     // camera
     const tg = this.camTarget && !this.camTarget.dead ? this.camTarget : (this.camTarget || this.cars[0]); if (!tg) return;
     if (this.mode === 'attract') { const lead = this.order && this.order[0]; if (lead) this.camTarget = lead; }
@@ -669,9 +692,12 @@ export class Game {
     const sh = this.shake; v.shakeX = (Math.random() - 0.5) * sh * v.zoom * 2; v.shakeY = (Math.random() - 0.5) * sh * v.zoom * 2;
     const vw = W / v.zoom, vh = H / v.zoom;
     // bake terrain around the view (budgeted)
-    this.ground.ensure(v.x - vw / 2 - 256, v.y - vh / 2 - 256, v.x + vw / 2 + 256, v.y + vh / 2 + 256, 2);
+    { const lx = tg.vx * 0.9, ly = tg.vy * 0.9; // look ahead in the direction of travel so new terrain is ready before it scrolls in
+      this.ground.ensure(v.x - vw / 2 - 64 + Math.min(0, lx), v.y - vh / 2 - 64 + Math.min(0, ly), v.x + vw / 2 + 64 + Math.max(0, lx), v.y + vh / 2 + 64 + Math.max(0, ly), 1);
+      if (this.state === 'countdown') this.ground.prebake(14); else if ((this.frameN = (this.frameN || 0) + 1) % 8 === 0) this.ground.prebake(1); }
     this.ground.draw(g, v.x - 0 + v.shakeX / v.zoom, v.y + v.shakeY / v.zoom, v.zoom, W, H);
     if (T.ocean) this.ground.drawSea(g, v, this.time);
+    mk && mk('ground');
     // night
     if (this.night) {
       g.fillStyle = 'rgba(4,6,22,0.55)'; g.fillRect(0, 0, W, H);
@@ -680,52 +706,66 @@ export class Game {
       g.globalCompositeOperation = 'source-over';
     }
     // ---- layered scene: ground -> barriers -> ground-level objects -> raised decks -> objects on decks -> tunnel roofs
-    const vis = this.vis = makeVis(T, v), high = o => (o.z || 0) >= ELEV_T;
+    const vis = this.vis = makeVis(T, v), N = T.N, idx = o => (((o.pos | 0) % N) + N) % N;
+    if (!T.layerInfo) T.layerInfo = buildLayerInfo(T);
+    const LI = T.layerInfo;
+    // which layer a car is drawn in is decided by the road it is on (not just its height), so it never pops behind a deck on a ramp
+    const inTun = o => T.hasTun && LI.tnNear[idx(o)] && (o.z || 0) < 12 && Math.abs(o.lat || 0) < T.hw[idx(o)] + 70;
+    const onDeck = o => (o.z || 0) >= ELEV_T || (LI.elevNear[idx(o)] && Math.abs(o.lat || 0) < T.hw[idx(o)] + T.wl[idx(o)] + 24 && !inTun(o));
+    const high = o => (o.z || 0) >= ELEV_T;
     if (T.hasElev || T.hasTun) drawDeckShadows(g, v, T, vis);
+    mk && mk('shadows');
     for (const it of this.items) if ((it.t === 'boost' || it.t === 'oil') && !high(it) && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
     for (const m of this.mines) if (!high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
     if (this.hazards) this.hazards.drawGround(g, v, this.time);
     if (this.ghost && this.state === 'racing') this.drawGhost(g);
     if (this.quality >= 1) drawWalls(g, v, T, vis);
+    mk && mk('walls+haz');
     // pickups hover under the cars (cars drive over them, never under)
     for (const it of this.items) if (it.active && it.t !== 'boost' && it.t !== 'oil' && !high(it) && v.visible(it.x, it.y, 40)) drawItem(g, v, it, this.time);
     const list = [];
     const P = this.sortedProps;
     for (let i = 0; i < P.length; i++) { const p = P[i]; if (v.visible(p.x, p.y, p.w ? 220 : 60)) list.push({ y: p.y + (p.type === 'dune' || p.type === 'lava' ? -200 : 0), k: 0, o: p }); }
-    if (T.hasTun && !T.tnNear) { T.tnNear = new Uint8Array(T.N); for (let i = 0; i < T.N; i++) if (T.tn[i]) for (let k = -9; k <= 9; k++) T.tnNear[(i + k + T.N) % T.N] = 1; } // tunnel + portal approach
-    const inTun = o => T.hasTun && T.tnNear[(((o.pos | 0) % T.N) + T.N) % T.N] && (o.z || 0) < 12 && Math.abs(o.lat || 0) < T.hw[(((o.pos | 0) % T.N) + T.N) % T.N] + 70;
-    for (const c of this.cars) if (!c.dead && !high(c) && !inTun(c) && v.visible(c.x, c.y, 60)) list.push({ y: c.y + 4, k: 2, o: c });
+    const vcars = this.cars.filter(c => !c.dead && v.visible(c.x, c.y, 60));
+    for (const c of vcars) { c._L = inTun(c) ? 2 : onDeck(c) ? 1 : 0; if (c._L === 0) list.push({ y: c.y + 4, k: 2, o: c }); }
     if (this.hazards) this.hazards.collect(list, v);
     list.sort((a, b) => a.y - b.y);
-    const drawEntry = e => {
-      if (e.k === 0) drawProp(g, v, e.o, th, this.time);
-      else if (e.k === 3) e.fn(g, v, this.time);
-      else { const c = e.o; drawCar(g, v, c, this.time, { night: this.night, tag: c !== this.human && this.mode !== 'attract', tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' }); }
-    };
-    for (const e of list) drawEntry(e);
-    if (T.hasElev) drawDecks(g, v, T, vis);
-    // anything high up (on a deck, or airborne off a jump) is drawn after the decks - on every map, not only ones with flyovers
+    const carOpts = (c, alpha) => ({ night: this.night, alpha, tag: c !== this.human && this.mode !== 'attract', tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' });
+    for (const e of list) { if (e.k === 0) drawProp(g, v, e.o, th, this.time); else if (e.k === 3) e.fn(g, v, this.time); else drawCar(g, v, e.o, this.time, carOpts(e.o)); }
+    mk && mk('props+cars');
+    if (T.hasElev) {
+      drawDecks(g, v, T, vis);
+    mk && mk('decks');
+      // cars passing underneath a flyover show through it as a faint silhouette instead of vanishing
+      for (const c of vcars) { const t = c._L === 0 && LI.underDeck(c.x, c.y) ? 0.4 : 0; c.xA = (c.xA || 0) + (t - (c.xA || 0)) * Math.min(1, dt * 10); if (c.xA > 0.03) drawCar(g, v, c, this.time, carOpts(c, c.xA)); }
+    }
+    // anything on a deck or airborne is drawn after the decks - on every map, not only ones with flyovers
     for (const it of this.items) if (high(it) && v.visible(it.x, it.y, 60)) { if (it.t === 'boost' || it.t === 'oil' || it.active) drawItem(g, v, it, this.time); }
     for (const m of this.mines) if (high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
-    { const top = []; for (const c of this.cars) if (!c.dead && high(c) && v.visible(c.x, c.y, 60)) top.push({ y: c.z * 1000 + c.y, k: 2, o: c }); top.sort((a, b) => a.y - b.y); for (const e of top) drawEntry(e); }
+    vcars.filter(c => c._L === 1).sort((a, b) => (a.z * 1000 + a.y) - (b.z * 1000 + b.y)).forEach(c => drawCar(g, v, c, this.time, carOpts(c)));
     if (T.hasTun) {
       const tg = this.camTarget || this.human;
-      const focus = tg && T.tnNear[(((tg.pos | 0) % T.N) + T.N) % T.N] ? tg.pos | 0 : -1;
+      const focus = tg && LI.tnNear[idx(tg)] ? idx(tg) : -1;
       drawTunnels(g, v, T, vis, focus);
       // everything underground is drawn over the hill (which is see-through when you're inside) so it never flickers out of sight
       for (const it of this.items) if ((it.active || it.t === 'boost' || it.t === 'oil') && it.tn && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
-      const under = []; for (const c of this.cars) if (!c.dead && !high(c) && inTun(c) && v.visible(c.x, c.y, 60)) under.push({ y: c.y, k: 2, o: c }); under.sort((a, b) => a.y - b.y); for (const e of under) { const c = e.o, near = focus >= 0 && Math.min(Math.abs(c.pos - focus), T.N - Math.abs(c.pos - focus)) < 90; drawCar(g, v, c, this.time, { night: this.night, alpha: near ? 1 : 0.42, tag: c !== this.human && this.mode !== 'attract', tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' }); }
+      for (const c of vcars.filter(c => c._L === 2).sort((a, b) => a.y - b.y)) {
+        const near = focus >= 0 && Math.min(Math.abs(c.pos - focus), N - Math.abs(c.pos - focus)) < 90, t = near ? 1 : 1 - 0.55 * clamp(LI.tnDepth[idx(c)] / 10, 0, 1);
+        c.tunA = c.tunA == null ? t : c.tunA + (t - c.tunA) * Math.min(1, dt * 6); drawCar(g, v, c, this.time, carOpts(c, c.tunA));
+      }
     }
     if (this.hazards) this.hazards.drawTop(g, v, this.time);
     this.drawGantry(g);
     for (const p of this.proj) if (v.visible(p.x, p.y, 40)) drawProjectile(g, v, p, this.time);
     this.fx.draw(g, v);
+    mk && mk('fx+top');
     if (this.night) { // headlight bloom over cars
       g.globalCompositeOperation = 'lighter';
-      for (const c of this.cars) if (!c.dead && c.nitroOn) { const X = v.sx(c.x), Y = v.sy(c.y); const gr = g.createRadialGradient(X, Y, 0, X, Y, 90 * v.zoom); gr.addColorStop(0, 'rgba(80,170,255,0.3)'); gr.addColorStop(1, 'rgba(80,170,255,0)'); g.fillStyle = gr; g.beginPath(); g.arc(X, Y, 90 * v.zoom, 0, TAU); g.fill(); }
+      for (const c of this.cars) if (!c.dead && c.nitroOn) glow(g, v.sx(c.x), v.sy(c.y), 90 * v.zoom, '80,170,255', 0.3);
       g.globalCompositeOperation = 'source-over';
     }
     this.drawAtmosphere(g, W, H, dt);
+    mk && mk('atmos');
     this.cam.zoom = v.zoom;
   }
   /** weather / ambience in screen space (parallax follows the camera) + colour grade + vignette */
@@ -751,10 +791,24 @@ export class Game {
       else if (kind === 'leaf') { g.fillStyle = `rgba(${p.r > 3 ? '200,150,50' : '120,170,60'},${0.5})`; g.save(); g.translate(X, Y); g.rotate(p.r + tm); g.fillRect(-3 * s, -1.5 * s, 6 * s, 3 * s); g.restore(); }
       else if (kind === 'spray') { g.fillStyle = `rgba(255,255,255,${0.1 + p.z * 0.1})`; g.beginPath(); g.arc(X, Y, 2 * s, 0, TAU); g.fill(); }
     }
+    // drifting cloud shadows (daytime): a few big soft blobs moving over the whole map
+    if (!this.night && th !== 'city') {
+      if (!this.clouds) { const r = mulberry32(T.seed ^ 0xc10d); this.clouds = []; const n = Math.max(4, Math.round(T.W * T.H / 4e6)); for (let i = 0; i < n; i++) this.clouds.push({ x: r() * T.W, y: r() * T.H, s: 500 + r() * 500, k: i % 2 }); }
+      g.globalAlpha = th === 'snow' ? 0.1 : 0.14;
+      for (const c of this.clouds) {
+        c.x += 16 * dt; c.y += 5 * dt; if (c.x > T.W + c.s) c.x = -c.s; if (c.y > T.H + c.s) c.y = -c.s;
+        const X = v.sx(c.x), Y = v.sy(c.y), R = c.s * v.zoom; if (X + R < 0 || Y + R < 0 || X - R > W || Y - R > H) continue;
+        g.drawImage(cloudSprite(c.k), X - R, Y - R * 0.7, R * 2, R * 1.4);
+      }
+      g.globalAlpha = 1;
+    }
     // colour grade + vignette
     const tint = { desert: '255,170,70', mesa: '255,120,50', snow: '120,170,255', city: '200,70,255', volcano: '255,90,20', coast: '255,230,160', forest: '60,140,60', warzone: '200,190,120', industrial: '150,160,170' }[th] || '255,255,255';
-    g.fillStyle = `rgba(${tint},${this.night ? 0.05 : 0.07})`; g.globalCompositeOperation = 'overlay'; g.fillRect(0, 0, W, H); g.globalCompositeOperation = 'source-over';
-    const vg = g.createRadialGradient(W / 2, H / 2, H * 0.45, W / 2, H / 2, Math.max(W, H) * 0.78); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, `rgba(0,0,0,${this.night ? 0.5 : 0.34})`); g.fillStyle = vg; g.fillRect(0, 0, W, H);
+    const vk = W + 'x' + H + this.night + th; if (!this.vig || this.vig.k !== vk) { // vignette is rendered once per screen size, then just blitted
+      const c = document.createElement('canvas'); c.width = Math.ceil(W / 4); c.height = Math.ceil(H / 4); const x = c.getContext('2d'), w = c.width, h = c.height;
+      const vg = x.createRadialGradient(w / 2, h / 2, h * 0.45, w / 2, h / 2, Math.max(w, h) * 0.78); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, `rgba(0,0,0,${this.night ? 0.5 : 0.34})`); x.fillStyle = `rgba(${tint},${this.night ? 0.035 : 0.05})`; x.fillRect(0, 0, w, h); x.fillStyle = vg; x.fillRect(0, 0, w, h); this.vig = { k: vk, c }; // colour grade baked in with the vignette
+    }
+    g.drawImage(this.vig.c, 0, 0, W, H);
   }
   drawGhost(g) {
     const gh = this.ghost; if (!gh || !gh.pts.length) return; const v = this.view;

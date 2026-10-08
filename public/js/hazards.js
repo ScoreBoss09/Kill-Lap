@@ -117,7 +117,7 @@ export class Hazards {
     for (const c of g.cars) {
       if (!c.local || c.dead || c.zAir > 2) continue; const rx = c.x - h.x, ry = c.y - h.y, u = rx * h.tx + ry * h.ty, w = rx * h.nx + ry * h.ny;
       if (Math.abs(u) < 76 && Math.abs(w) < h.hw + 6) {
-        if (c.human && !g.seenFord) { g.seenFord = true; g.msg('WATER - SLOWS YOU DOWN', 1.6, '#7fd0ff'); }
+        if (c.human && !g.seenFord && Math.hypot(c.vx, c.vy) < 330) { g.seenFord = true; g.msg('WATER SLOWS YOU - HIT IT OVER 120 KM/H TO AQUAPLANE', 2.2, '#7fd0ff'); }
         if (!(c.waterT > 0)) { g.snd('splash', c.x, c.y, 0.7); for (let k = 0; k < 8; k++) g.fx.smoke(c.x, c.y, (Math.random() - 0.5) * 160, (Math.random() - 0.5) * 160, 6, 0.6, '170,210,240', 0.5); }
         c.waterT = 0.18; if (Math.random() < 0.6) g.fx.smoke(c.x - Math.cos(c.a) * 12, c.y - Math.sin(c.a) * 12, (Math.random() - 0.5) * 120, (Math.random() - 0.5) * 120, 5, 0.5, '190,225,250', 0.55);
       }
@@ -157,7 +157,7 @@ export class Hazards {
     for (const c of g.cars) {
       if (!c.local || c.dead || (c.z || 0) > 12) continue; const rx = c.x - h.x, ry = c.y - h.y, u = rx * h.tx + ry * h.ty, w = rx * dx + ry * dy;
       if (Math.abs(u) > 1500) continue;
-      if (w > s - 75 && w < s + 75) { c.waterT = 0.25; c.vx += dx * 520 * dt; c.vy += dy * 520 * dt; if (Math.random() < 0.7) g.fx.smoke(c.x, c.y, dx * 120 + (Math.random() - 0.5) * 120, dy * 120 + (Math.random() - 0.5) * 120, 7, 0.6, '210,235,250', 0.6); if (!c.wetHit) { c.wetHit = true; g.snd('splash', c.x, c.y, 0.9); } }
+      if (w > s - 75 && w < s + 75) { c.waterT = 0.25; c.vx += dx * 520 * dt; c.vy += dy * 520 * dt; if (Math.random() < 0.3) g.fx.smoke(c.x, c.y, dx * 120 + (Math.random() - 0.5) * 120, dy * 120 + (Math.random() - 0.5) * 120, 7, 0.6, '210,235,250', 0.6); if (!c.wetHit) { c.wetHit = true; g.snd('splash', c.x, c.y, 0.9); } }
       else if (w <= s - 75 && w > s - 280) { c.waterT = 0.2; if (Math.random() < 0.2) g.fx.smoke(c.x, c.y, (Math.random() - 0.5) * 60, (Math.random() - 0.5) * 60, 5, 0.5, '190,225,245', 0.4); } else c.wetHit = false;
     }
     return true;

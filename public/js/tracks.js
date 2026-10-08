@@ -438,34 +438,102 @@ function makeClear(T) {
   };
 }
 
+/* Scenery is composed rather than sprinkled: buildings line the road in districts and form aligned blocks, trees grow in
+ * groves, rocks sit in outcrops, containers stack in yards - then a light scatter of singles fills the gaps. */
+const BIG_PROPS = new Set(['tower', 'building', 'container', 'tank', 'adobe', 'mesa', 'cabin', 'crane', 'billboard', 'hut', 'ruin']);
+const SCENES = {
+  desert:     { front: ['adobe'], frontChance: 0.35, blocks: ['adobe'], groves: [['rock', 'rock', 'cactus'], ['cactus', 'cactus', 'rock']], groveN: [3, 7], spread: 90, scatter: ['cactus', 'rock', 'dune'], dunes: 10 },
+  forest:     { groves: [['pine', 'pine', 'oak'], ['oak', 'oak', 'pine'], ['pine', 'pine', 'pine']], groveN: [10, 26], spread: 190, scatter: ['oak', 'rock', 'log'], extra: [['log', 'rock'], [2, 4]] },
+  snow:       { front: ['cabin'], frontChance: 0.18, groves: [['snowpine', 'snowpine'], ['snowpine', 'rock']], groveN: [8, 22], spread: 180, scatter: ['snowpine', 'rock', 'snowman'] },
+  city:       { front: ['building', 'building', 'tower'], frontChance: 0.8, blocks: ['building', 'tower', 'tower'], blockN: 30, signs: true, scatter: ['building', 'tower'] },
+  industrial: { front: ['building', 'building', 'container'], frontChance: 0.6, blocks: ['building'], blockN: 10, yards: 11, tanks: 9, groves: [['barrels', 'barrels', 'tyres']], groveN: [2, 3], groveMax: 30, spread: 60, scatter: ['barrels', 'building'], fill: 0.42 },
+  volcano:    { groves: [['spire', 'rock', 'spire'], ['rock', 'rock', 'spire']], groveN: [4, 9], spread: 130, scatter: ['lava', 'rock', 'spire'] },
+  coast:      { front: ['hut'], frontChance: 0.25, groves: [['palm', 'palm', 'palm'], ['palm', 'rock']], groveN: [4, 10], spread: 140, beach: true, scatter: ['palm', 'rock', 'umbrella'] },
+  warzone:    { front: ['ruin', 'ruin'], frontChance: 0.55, blocks: ['ruin'], blockN: 18, groves: [['crater', 'crater', 'tankwreck'], ['sandbags', 'sandbags', 'barrels'], ['crater', 'rock']], groveN: [2, 5], groveMax: 60, spread: 120, scatter: ['crater', 'rock'], fill: 0.75 },
+  mesa:       { mesas: 14, groves: [['rock', 'rock', 'cactus']], groveN: [3, 7], spread: 100, scatter: ['rock', 'cactus'] },
+};
 function placeProps(T, custom) {
-  const rng = mulberry32(T.seed ^ 0x51ed270b);
-  const th = T.th, list = th.props, props = [];
-  const clearDist = T.clearDist;
-  const dens = (T.data.dens != null ? T.data.dens : th.dens) * 1.0;
-  const area = T.W * T.H, target = Math.min(1100, Math.round((area / 90000) * 12 * dens));
-  const tunPts = [], deckPts = []; for (let i = 0; i < T.N; i += 2) { if (T.tn[i]) tunPts.push(i); if (T.z[i] >= 30) deckPts.push(i); }
+  const rng = mulberry32(T.seed ^ 0x51ed270b), N = T.N;
+  const th = T.th, props = [], clearDist = T.clearDist, S = SCENES[T.theme] || { groves: [th.props], groveN: [3, 8], spread: 120, scatter: th.props };
+  const dens = T.data.dens != null ? T.data.dens : th.dens;
+  const area = T.W * T.H, target = Math.round(Math.min(950, (area / 90000) * 12 * dens) * (S.fill || 1));
+  const tunPts = [], deckPts = []; for (let i = 0; i < N; i += 2) { if (T.tn[i]) tunPts.push(i); if (T.z[i] >= 30) deckPts.push(i); }
   const nearDeck = (x, y, r) => deckPts.some(i => Math.hypot(T.x[i] - x, T.y[i] - y) < T.hw[i] + r);
   const nearTun = (x, y, r) => tunPts.some(i => Math.hypot(T.x[i] - x, T.y[i] - y) < T.hw[i] + r);
-  const placedGrid = new Map(); const nearRail = (x, y, r = 135) => T.hazards.some(h => h.t === 'train' && Math.abs((x - h.x) * -h.ry + (y - h.y) * h.rx) < r);
-  for (let tries = 0; props.length < target && tries < target * 12; tries++) {
-    const px = rng() * T.W, py = rng() * T.H;
-    const type = list[Math.floor(rng() * list.length)];
-    const big = ['tower', 'building', 'container', 'tank', 'adobe', 'mesa', 'cabin', 'crane', 'billboard', 'hut', 'ruin'].includes(type);
-    const need = VERGE + 36 + (big ? 100 : 0);
-    if (clearDist(px, py) < need) continue;
-    if (T.ocean && oceanAt(T, px, py) > -80) continue;
-    if (tunPts.length && nearTun(px, py, 120 + (big ? 140 : 0))) continue;
-    if (deckPts.length && nearDeck(px, py, 90 + (big ? 190 : 0))) continue; // keep tall scenery from leaning over flyovers
-    if (T.hazards.some(h => h.t === 'train' && Math.abs((px - h.x) * -h.ry + (py - h.y) * h.rx) < 135 + (big ? 130 : 0))) continue;
-    const pk = Math.floor(px / 70) + Math.floor(py / 70) * 400; const q = placedGrid.get(pk);
-    if (q && Math.hypot(q.x - px, q.y - py) < (big ? 120 : 34)) continue;
-    const pr = { type, x: px, y: py, s: 0.75 + rng() * 0.7, r: rng() * TAU, v: rng() };
-    if (big) { pr.w = 90 + rng() * 140; pr.d = 80 + rng() * 120; pr.h = type === 'ruin' ? 40 + rng() * 50 : 70 + rng() * (type === 'tower' ? 220 : 90); }
-    props.push(pr); placedGrid.set(pk, pr);
+  const nearRail = (x, y, r = 135) => T.hazards.some(h => h.t === 'train' && Math.abs((x - h.x) * -h.ry + (y - h.y) * h.rx) < r);
+  const grid = new Map(), CELL = 160, gk = (x, y) => Math.floor(x / CELL) + ',' + Math.floor(y / CELL);
+  const gauss = () => (rng() + rng() + rng() - 1.5) / 1.5;
+  const radius = p => BIG_PROPS.has(p.type) ? (p.al ? Math.min(p.w, p.d) * 0.58 : Math.hypot(p.w || 110, p.d || 100) / 2) : p.type === 'dune' ? 70 : p.type === 'lava' ? 46 : (['pine', 'oak', 'snowpine', 'palm'].includes(p.type) ? 22 : 15) * p.s;
+  /** footprint + clearance test against roads, rails, decks, tunnels, sea and everything already placed */
+  const dbg = T._propDbg = {}, no = k => { dbg[k] = (dbg[k] || 0) + 1; return false; };
+  const fits = (p, rad) => {
+    const big = BIG_PROPS.has(p.type), tall = big || p.type === 'spire';
+    if (p.x < 30 || p.y < 30 || p.x > T.W - 30 || p.y > T.H - 30) return no('edge');
+    if (clearDist(p.x, p.y) < VERGE + 24 + (p.al ? p.d / 2 : rad * (big ? 1 : 0.6)) + (p.type === 'tower' ? 50 : 0)) return no('road');
+    if (T.ocean && oceanAt(T, p.x, p.y) > -60 - rad) return no('sea');
+    if (tunPts.length && nearTun(p.x, p.y, 110 + rad + (tall ? 80 : 0))) return no('tun');
+    if (deckPts.length && nearDeck(p.x, p.y, 80 + rad + (tall ? 120 : 0))) return no('deck');
+    if (nearRail(p.x, p.y, 110 + rad + (tall ? 40 : 0))) return no('rail');
+    const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
+    for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) { const l = grid.get((cx + a) + ',' + (cy + b)); if (l) for (const q of l) if (Math.hypot(q.x - p.x, q.y - p.y) < (q._r + rad) * (big || BIG_PROPS.has(q.type) ? 1.0 : 0.72)) return no('hit'); }
+    return true;
+  };
+  const put = p => { if (props.length >= target) return false; const rad = radius(p); if (!fits(p, rad)) return false; p._r = rad; props.push(p); const k = gk(p.x, p.y); (grid.get(k) || grid.set(k, []).get(k)).push(p); return true; };
+  const mk = (type, x, y, o = {}) => { const p = { type, x, y, s: 0.8 + rng() * 0.5, r: o.r ?? rng() * TAU, v: rng(), ...o };
+    if (BIG_PROPS.has(type) && p.w == null) { p.w = 90 + rng() * 120; p.d = 80 + rng() * 90; p.h = type === 'ruin' ? 40 + rng() * 50 : type === 'tower' ? 150 + rng() * 170 : type === 'hut' ? 38 : 60 + rng() * 70; }
+    if (type === 'mesa') { p.w = 220 + rng() * 160; p.d = 180 + rng() * 140; }
+    if (type === 'container') { p.w = 100; p.d = 36; }
+    if (type === 'tank') { p.w = 110; p.d = 110; }
+    if (type === 'hut') { p.w = 60 + rng() * 30; p.d = 50 + rng() * 25; }
+    return p; };
+  const pick = arr => arr[Math.floor(rng() * arr.length)];
+  // most scenery sits within sight of the road (that's where the camera is); the rest is spread over the whole map
+  const spot = (minOff, range) => { if (rng() < 0.2) return [rng() * T.W, rng() * T.H]; const i = Math.floor(rng() * N), side = rng() < 0.5 ? -1 : 1, q = pointAt(T, i, side * (T.hw[i] + VERGE + minOff + Math.pow(rng(), 1.5) * range)); return [q.x, q.y]; };
+  // 1) frontage: districts of buildings lining the road, square to it, with a second row behind in towns
+  if (S.front) for (const side of [-1, 1]) {
+    let i = Math.floor(rng() * 40), on = rng() < S.frontChance;
+    while (i < N) {
+      if (rng() < 0.06) on = rng() < S.frontChance;
+      const type = pick(S.front), p0 = mk(type, 0, 0), step = Math.max(6, Math.round((p0.w + 26 + rng() * 30) / T.step));
+      if (on && T.z[i] < 20 && !T.tn[i] && Math.abs(T.curv[i]) < 0.0016) {
+        const off = T.hw[i] + VERGE + 34 + p0.d / 2, q = pointAt(T, i, side * off); p0.x = q.x; p0.y = q.y; p0.r = T.ang[i]; p0.al = true; put(p0);
+        if (S.blocks && rng() < 0.55) { const p1 = mk(pick(S.blocks), 0, 0), q1 = pointAt(T, i, side * (off + p0.d / 2 + 30 + p1.d / 2)); p1.x = q1.x; p1.y = q1.y; p1.r = T.ang[i]; p1.al = true; put(p1); }
+      }
+      i += step;
+    }
   }
+  // 2) blocks: aligned grids of buildings away from the road (towns), container yards
+  const blockCount = S.blocks ? Math.round((S.blockN || 8) * area / 18e6) : 0;
+  for (let k = 0; k < blockCount; k++) {
+    const [cx, cy] = spot(260, 900); if (clearDist(cx, cy) < 260) continue; const n = nearest(T, cx, cy, -1), ang = T.ang[n.i] + (rng() < 0.5 ? 0 : Math.PI / 2);
+    const cols = 2 + Math.floor(rng() * 3), rows = 2 + Math.floor(rng() * 2), pitch = 150 + rng() * 40, ca = Math.cos(ang), sa = Math.sin(ang);
+    for (let a = 0; a < cols; a++) for (let b = 0; b < rows; b++) { if (rng() < 0.15) continue; const u = (a - (cols - 1) / 2) * pitch, w = (b - (rows - 1) / 2) * pitch; const p = mk(pick(S.blocks), cx + ca * u - sa * w, cy + sa * u + ca * w, { r: ang, al: true }); p.w = Math.min(p.w, pitch - 30); p.d = Math.min(p.d, pitch - 30); put(p); }
+  }
+  if (S.yards) for (let k = 0, n = Math.round(S.yards * area / 18e6); k < n; k++) {
+    const [cx, cy] = spot(220, 800); if (clearDist(cx, cy) < 220) continue; const ang = T.ang[nearest(T, cx, cy, -1).i], ca = Math.cos(ang), sa = Math.sin(ang);
+    for (let a = 0; a < 3; a++) for (let b = 0; b < 4; b++) { if (rng() < 0.2) continue; const u = (a - 1) * 112, w = (b - 1.5) * 46; put(mk('container', cx + ca * u - sa * w, cy + sa * u + ca * w, { r: ang, al: true })); }
+    if (rng() < 0.7) put(mk('crane', cx + ca * 190, cy + sa * 190, { r: ang + Math.PI / 2 }));
+  }
+  if (S.tanks) for (let k = 0, n = Math.round(S.tanks * area / 18e6); k < n; k++) { const cx = rng() * T.W, cy = rng() * T.H, a = rng() * TAU; for (let m = 0; m < 3; m++) put(mk('tank', cx + Math.cos(a) * m * 130, cy + Math.sin(a) * m * 130)); }
+  if (S.mesas) for (let k = 0; k < S.mesas; k++) put(mk('mesa', rng() * T.W, rng() * T.H));
+  if (S.dunes) for (let k = 0; k < S.dunes; k++) put(mk('dune', rng() * T.W, rng() * T.H, { s: 1 + rng() }));
+  // 3) groves / outcrops: natural clusters, denser in the middle
+  if (S.groves) for (let tries = 0, made = 0; tries < 400 && made < (S.groveMax || 999) && props.length < target * 0.86; tries++) {
+    const [cx, cy] = spot(120 + S.spread * 0.6, 900); if (clearDist(cx, cy) < 100) continue;
+    const kinds = pick(S.groves), n = S.groveN[0] + Math.floor(rng() * (S.groveN[1] - S.groveN[0] + 1)), spread = S.spread * (0.7 + rng() * 0.6);
+    made++; for (let m = 0, got = 0; m < n * 3 && got < n; m++) if (put(mk(pick(kinds), cx + gauss() * spread, cy + gauss() * spread))) got++;
+  }
+  if (S.extra) for (let k = 0; k < 40; k++) { const cx = rng() * T.W, cy = rng() * T.H; for (let m = 0; m < S.extra[1][0] + rng() * S.extra[1][1]; m++) put(mk(pick(S.extra[0]), cx + gauss() * 50, cy + gauss() * 50)); }
+  if (S.beach && T.ocean) for (let k = 0; k < 160; k++) { // umbrellas and palms along the shore
+    const o = T.ocean, c = rng() * (o.side === 'N' || o.side === 'S' ? T.W : T.H), off = 60 + rng() * 220, along = o.s + shoreWob(c) - (o.side === 'N' || o.side === 'W' ? -1 : 1) * off;
+    const [x, y] = o.side === 'N' || o.side === 'S' ? [c, along] : [along, c]; put(mk(rng() < 0.65 ? 'umbrella' : 'palm', x, y));
+  }
+  // 4) billboards facing the road
+  if (S.signs) for (let i = 30; i < N; i += 45 + Math.floor(rng() * 40)) { const side = rng() < 0.5 ? -1 : 1, q = pointAt(T, i, side * (T.hw[i] + VERGE + 60)); if (T.z[i] < 20) put(mk('billboard', q.x, q.y, { r: T.ang[i] })); }
+  // 5) light scatter of singles
+  for (let tries = 0; props.length < target && tries < target * 4 && S.scatter.length; tries++) { const [x, y] = spot(20, 1000); put(mk(pick(S.scatter), x, y)); }
   // trackside dressing: tyre stacks / lamps on outer verge near fast corners
-  for (let i = 0; i < T.N; i += 1) {
+  for (let i = 0; i < N; i += 1) {
     const c = Math.abs(T.curv[i]); if (T.elev[i] || T.tn[i]) continue;
     if (c > 0.0011 && i % 5 === 0) {
       const side = T.curv[i] > 0 ? -1 : 1; // outside of the corner
@@ -477,8 +545,7 @@ function placeProps(T, custom) {
     }
   }
   for (const c of custom) props.push({ type: c.type || c.t, x: c.x, y: c.y, s: c.s || 1, r: c.r || 0, v: rng(), w: c.w, d: c.d, h: c.h, custom: true });
-  // fill missing sizes
-  for (const p of props) if (['tower', 'building', 'container', 'tank', 'adobe', 'mesa', 'cabin', 'crane', 'billboard', 'hut', 'ruin'].includes(p.type) && !p.w) { p.w = 110; p.d = 100; p.h = 110; }
+  for (const p of props) { delete p._r; if (BIG_PROPS.has(p.type) && !p.w) { p.w = 110; p.d = 100; p.h = 110; } }
   T.props = props;
 }
 

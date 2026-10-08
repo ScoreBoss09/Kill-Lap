@@ -24,6 +24,13 @@ function shadowEllipse(g, v, x, y, rx, ry, a = 0.28) {
 function disc(g, v, x, y, h, r, fill) {
   const s = v.scale(h); g.fillStyle = fill; g.beginPath(); g.arc(v.px(x, y, h), v.py(x, y, h), r * s, 0, TAU); g.fill();
 }
+const WPAT = new Map();
+/** 8x10 tile: one window (3x2) per tile, so a wall shows 5 rows of windows spaced like the old dashed strips */
+function windowPattern(g, col) {
+  let p = WPAT.get(col); if (p !== undefined) return p;
+  const c = document.createElement('canvas'); c.width = 8; c.height = 10; const x = c.getContext('2d'); x.fillStyle = col; x.fillRect(0, 9, 3, 2); x.fillRect(0, 0, 3, 1);
+  p = g.createPattern(c, 'repeat'); if (p && !p.setTransform) p = null; WPAT.set(col, p); return p;
+}
 export function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
   const c = Math.cos(rot), s = Math.sin(rot), hw = w / 2, hd = d / 2;
   const corners = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([a, b]) => [cx + a * c - b * s, cy + a * s + b * c]);
@@ -42,10 +49,11 @@ export function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
     const light = clamp(0.5 - (mx * 0.5 + my * 0.8) / ml * 0.28, 0.2, 0.9);
     g.fillStyle = shade(colWall, (light - 0.55) * 0.9);
     g.beginPath(); g.moveTo(base[i][0], base[i][1]); g.lineTo(base[j][0], base[j][1]); g.lineTo(top[j][0], top[j][1]); g.lineTo(top[i][0], top[i][1]); g.closePath(); g.fill();
-    if (opts.windows && v.quality > 0) { // lit windows as dotted strips (one batched stroke per wall)
-      g.strokeStyle = opts.windows; g.lineWidth = Math.max(1, 2.2 * v.zoom); g.setLineDash([3 * v.zoom, 5 * v.zoom]); g.beginPath();
-      for (let k = 1; k < 5; k++) { const f = k / 5; g.moveTo(base[i][0] + (top[i][0] - base[i][0]) * f, base[i][1] + (top[i][1] - base[i][1]) * f); g.lineTo(base[j][0] + (top[j][0] - base[j][0]) * f, base[j][1] + (top[j][1] - base[j][1]) * f); }
-      g.stroke(); g.setLineDash([]);
+    if (opts.windows && v.quality > 0) { // rows of windows: one pattern fill mapped onto the wall (much cheaper than dashed strokes)
+      const pat = windowPattern(g, opts.windows); if (pat) {
+        const ux = base[j][0] - base[i][0], uy = base[j][1] - base[i][1], ul = Math.hypot(ux, uy) || 1, vx = top[i][0] - base[i][0], vy = top[i][1] - base[i][1];
+        pat.setTransform(new DOMMatrix([ux / ul * v.zoom, uy / ul * v.zoom, vx / 50, vy / 50, base[i][0], base[i][1]])); g.fillStyle = pat; g.fill();
+      }
     }
   }
   g.fillStyle = colRoof; g.beginPath(); top.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.fill();
@@ -102,7 +110,7 @@ export function drawProp(g, v, p, th, t) {
     case 'umbrella': { shadowEllipse(g, v, x, y, 22, 12, 0.2); g.strokeStyle = '#ddd'; g.lineWidth = 2 * v.zoom; g.beginPath(); g.moveTo(v.px(x, y, 0), v.py(x, y, 0)); g.lineTo(v.px(x, y, 34), v.py(x, y, 34)); g.stroke(); for (let k = 0; k < 6; k++) { g.fillStyle = k & 1 ? '#f4f4f4' : ['#e53935', '#1e88e5', '#fdd835'][(p.v * 3) | 0]; g.beginPath(); g.moveTo(v.px(x, y, 38), v.py(x, y, 38)); const a0 = (k / 6) * TAU, a1 = ((k + 1) / 6) * TAU; g.lineTo(v.px(x + Math.cos(a0) * 24, y + Math.sin(a0) * 24, 28), v.py(x + Math.cos(a0) * 24, y + Math.sin(a0) * 24, 28)); g.lineTo(v.px(x + Math.cos(a1) * 24, y + Math.sin(a1) * 24, 28), v.py(x + Math.cos(a1) * 24, y + Math.sin(a1) * 24, 28)); g.fill(); } break; }
     case 'log': { g.save(); g.translate(v.sx(x), v.sy(y)); g.rotate(p.r); g.scale(v.zoom, v.zoom); g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(-26, -5, 54, 14); g.fillStyle = '#6a4a2e'; g.fillRect(-28, -7, 56, 13); g.fillStyle = '#8a6540'; g.fillRect(-28, -7, 56, 5); g.fillStyle = '#c9a272'; g.beginPath(); g.ellipse(28, -1, 3, 6, 0, 0, TAU); g.fill(); g.restore(); break; }
     case 'snowman': { shadowEllipse(g, v, x, y, 14, 8); disc(g, v, x, y, 0, 13, '#e8f0f5'); disc(g, v, x, y, 14, 9.5, '#f4f9fc'); disc(g, v, x, y, 26, 6.5, '#ffffff'); disc(g, v, x + 1, y, 30, 1.5, '#e8761f'); break; }
-    case 'lava': { const gr = g.createRadialGradient(v.sx(x), v.sy(y), 0, v.sx(x), v.sy(y), 60 * s * v.zoom); const f = 0.7 + Math.sin(t * 2 + p.v * 20) * 0.3; gr.addColorStop(0, `rgba(255,${(180 * f) | 0},40,0.95)`); gr.addColorStop(0.5, 'rgba(255,90,20,0.6)'); gr.addColorStop(1, 'rgba(255,60,10,0)'); g.fillStyle = gr; g.beginPath(); g.arc(v.sx(x), v.sy(y), 60 * s * v.zoom, 0, TAU); g.fill(); break; }
+    case 'lava': { const f = 0.7 + Math.sin(t * 2 + p.v * 20) * 0.3, R = 60 * s * v.zoom; glow(g, v.sx(x), v.sy(y), R, '255,90,20', 0.95); g.globalAlpha = f; glow(g, v.sx(x), v.sy(y), R * 0.55, '255,200,60', 0.9); g.globalAlpha = 1; break; }
     case 'spire': {
       shadowEllipse(g, v, x, y, 20 * s, 12 * s, 0.35);
       for (let L = 0; L < 5; L++) { const h = L * 14 * s, rr = (20 - L * 3.8) * s; disc(g, v, x, y, h, rr, shade('#3a2724', -0.1 + L * 0.12)); }
@@ -116,7 +124,7 @@ export function drawProp(g, v, p, th, t) {
       break;
     }
     case 'ruin': {
-      const rot = Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2) + (p.v - 0.5) * 0.25, c = Math.cos(rot), sn = Math.sin(rot);
+      const rot = p.al ? p.r + (p.v - 0.5) * 0.1 : Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2) + (p.v - 0.5) * 0.25, c = Math.cos(rot), sn = Math.sin(rot);
       box(g, v, x, y, p.w, p.d, p.h, rot, shade('#7d7a70', ((p.v * 7) % 1 - 0.5) * 0.2), '#5e5b52', { windows: 'rgba(15,15,15,0.85)' });
       box(g, v, x + c * p.w * 0.28, y + sn * p.w * 0.28, p.w * 0.4, p.d * 0.9, p.h * 1.5, rot, '#6d6a60', '#4e4b43', { windows: 'rgba(15,15,15,0.85)' });
       for (let k = 0; k < 6; k++) { const a = k * 1.1 + p.r, d = Math.max(p.w, p.d) * 0.62 + (k % 3) * 8; disc(g, v, x + Math.cos(a) * d, y + Math.sin(a) * d, 2, 7 + (k % 3) * 3, shade('#6f6b60', (k % 2) * 0.15 - 0.1)); }
@@ -134,16 +142,16 @@ export function drawProp(g, v, p, th, t) {
       if (Math.sin(t * 2 + p.v * 20) > -0.3) disc(g, v, x + 6, y - 4, 36 + Math.sin(t * 3 + p.v * 9) * 3, 6, 'rgba(255,120,30,0.35)');
       break;
     }
-    case 'crater': { const X = v.sx(x), Y = v.sy(y), R = 38 * s * v.zoom; const gr = g.createRadialGradient(X, Y, R * 0.15, X, Y, R); gr.addColorStop(0, 'rgba(10,8,6,0.85)'); gr.addColorStop(0.7, 'rgba(30,24,18,0.7)'); gr.addColorStop(0.9, 'rgba(120,105,80,0.5)'); gr.addColorStop(1, 'rgba(120,105,80,0)'); g.fillStyle = gr; g.beginPath(); g.ellipse(X, Y, R, R * 0.82, p.r, 0, TAU); g.fill(); break; }
+    case 'crater': { const X = v.sx(x), Y = v.sy(y), R = 38 * s * v.zoom; g.save(); g.translate(X, Y); g.rotate(p.r); g.scale(1, 0.82); g.drawImage(craterSprite(), -R, -R, R * 2, R * 2); g.restore(); break; }
     case 'adobe': case 'cabin': case 'building': case 'hut': case 'tower': {
       const [wc, rc] = WALLCOL[p.type]; const night = th.night;
-      const rot = Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2) + (p.v - 0.5) * 0.2;
+      const rot = p.al ? p.r : Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2) + (p.v - 0.5) * 0.2;
       box(g, v, x, y, p.w * (p.type === 'hut' ? 0.5 : 1), p.d * (p.type === 'hut' ? 0.5 : 1), p.type === 'hut' ? 38 : p.h, rot, shade(wc, ((p.v * 7) % 1 - 0.5) * 0.3), rc, { roof: p.type === 'adobe' || p.type === 'hut' ? 'red' : p.type === 'building' || p.type === 'tower' ? 'grey' : null, windows: night ? '#ffe9a0' : (p.type === 'building' || p.type === 'tower' ? 'rgba(160,200,230,0.65)' : null) });
       break;
     }
     case 'container': {
       const cols = ['#c0392b', '#2e86c1', '#d68910', '#27ae60', '#7d3c98', '#cfd8dc'];
-      const c = cols[Math.floor(p.v * 6)]; const rot = Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2);
+      const c = cols[Math.floor(p.v * 6)]; const rot = p.al ? p.r : Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2);
       box(g, v, x, y, 100, 36, 34, rot, c, shade(c, 0.12));
       if (p.v > 0.5) box(g, v, x + Math.cos(rot + Math.PI / 2) * 0, y, 100, 36, 34, rot, c, shade(c, 0.12));
       break;
@@ -185,16 +193,25 @@ export function drawProp(g, v, p, th, t) {
   }
 }
 /** additive glow passes for lamps / lava / spires (night themes) */
+const GLOWS = new Map();
+/** pre-rendered soft radial glow (drawn scaled with drawImage instead of building a gradient every frame) */
+export function glowSprite(rgb, a0) {
+  const k = rgb + a0; let c = GLOWS.get(k); if (c) return c;
+  c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d'), gr = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+  const C = a => rgb[0] === '#' ? rgba(rgb, a) : `rgba(${rgb},${a})`; gr.addColorStop(0, C(a0)); gr.addColorStop(0.5, C(a0 * 0.38)); gr.addColorStop(1, C(0)); x.fillStyle = gr; x.fillRect(0, 0, 128, 128); GLOWS.set(k, c); return c;
+}
+let CRATER = null;
+function craterSprite() {
+  if (CRATER) return CRATER; const c = CRATER = document.createElement('canvas'); c.width = c.height = 96; const x = c.getContext('2d'), gr = x.createRadialGradient(48, 48, 7, 48, 48, 48);
+  gr.addColorStop(0, 'rgba(10,8,6,0.85)'); gr.addColorStop(0.7, 'rgba(30,24,18,0.7)'); gr.addColorStop(0.9, 'rgba(120,105,80,0.5)'); gr.addColorStop(1, 'rgba(120,105,80,0)'); x.fillStyle = gr; x.fillRect(0, 0, 96, 96); return c;
+}
+export const glow = (g, X, Y, r, rgb, a0) => g.drawImage(glowSprite(rgb, a0), X - r, Y - r, r * 2, r * 2);
 export function drawProp2Glow(g, v, p, t) {
   if (p.type === 'lamp') {
-    const X = v.px(p.x, p.y, 82), Y = v.py(p.x, p.y, 82), r = 190 * v.zoom; const gr = g.createRadialGradient(v.sx(p.x), v.sy(p.y), 0, v.sx(p.x), v.sy(p.y), r);
-    gr.addColorStop(0, 'rgba(255,230,160,0.38)'); gr.addColorStop(1, 'rgba(255,230,160,0)'); g.fillStyle = gr; g.beginPath(); g.arc(v.sx(p.x), v.sy(p.y), r, 0, TAU); g.fill();
-    g.fillStyle = 'rgba(255,240,190,0.5)'; g.beginPath(); g.arc(X, Y, 12 * v.zoom, 0, TAU); g.fill();
-  } else if (p.type === 'spire') {
-    const gr = g.createRadialGradient(v.sx(p.x), v.sy(p.y), 0, v.sx(p.x), v.sy(p.y), 90 * v.zoom); gr.addColorStop(0, 'rgba(255,100,20,0.35)'); gr.addColorStop(1, 'rgba(255,80,10,0)'); g.fillStyle = gr; g.beginPath(); g.arc(v.sx(p.x), v.sy(p.y), 90 * v.zoom, 0, TAU); g.fill();
-  } else if (p.type === 'lava') {
-    const gr = g.createRadialGradient(v.sx(p.x), v.sy(p.y), 0, v.sx(p.x), v.sy(p.y), 140 * v.zoom); gr.addColorStop(0, 'rgba(255,100,20,0.28)'); gr.addColorStop(1, 'rgba(255,80,10,0)'); g.fillStyle = gr; g.beginPath(); g.arc(v.sx(p.x), v.sy(p.y), 140 * v.zoom, 0, TAU); g.fill();
-  }
+    glow(g, v.sx(p.x), v.sy(p.y), 190 * v.zoom, '255,230,160', 0.38);
+    glow(g, v.px(p.x, p.y, 82), v.py(p.x, p.y, 82), 16 * v.zoom, '255,240,190', 0.8);
+  } else if (p.type === 'spire') glow(g, v.sx(p.x), v.sy(p.y), 90 * v.zoom, '255,100,20', 0.35);
+  else if (p.type === 'lava') glow(g, v.sx(p.x), v.sy(p.y), 140 * v.zoom, '255,100,20', 0.28);
 }
 
 /* ------------------------------------------------------------------ pickups & hazards */
@@ -215,7 +232,7 @@ export function drawItem(g, v, it, t) {
   }
   const col = ITEM_COL[it.t] || '#fff', bob = iz + 9 + Math.sin(t * 3 + it.id) * 2.5;
   g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(SX + 6 * v.zoom, SY + 6 * v.zoom, 14 * v.zoom, 8 * v.zoom, 0, 0, TAU); g.fill();
-  const gr = g.createRadialGradient(SX, SY, 0, SX, SY, 34 * v.zoom); gr.addColorStop(0, rgba(col, 0.5)); gr.addColorStop(1, rgba(col, 0)); g.fillStyle = gr; g.beginPath(); g.arc(SX, SY, 34 * v.zoom, 0, TAU); g.fill();
+  glow(g, SX, SY, 34 * v.zoom, col, 0.5);
   const X = v.px(x, y, bob), Y = v.py(x, y, bob), s = v.scale(bob);
   g.save(); g.translate(X, Y); g.scale(s, s); g.rotate(Math.sin(t * 2 + it.id) * 0.2);
   g.fillStyle = '#10131a'; g.strokeStyle = col; g.lineWidth = 2.5; g.beginPath(); g.roundRect(-12, -12, 24, 24, 5); g.fill(); g.stroke();
@@ -367,10 +384,16 @@ export function drawMine(g, v, m, t) {
 
 /* ------------------------------------------------------------------ particles */
 let _glow = null;
-function glowSprite() {
+function fireSprite() {
   if (_glow) return _glow; const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
   const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,230,1)'); gr.addColorStop(0.25, 'rgba(255,200,80,0.9)'); gr.addColorStop(0.6, 'rgba(255,90,10,0.45)'); gr.addColorStop(1, 'rgba(255,60,0,0)');
   g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return (_glow = c);
+}
+const PUFFS = new Map();
+/** soft round puff for smoke/spray, one per colour (drawImage is far cheaper than a path fill per particle) */
+function puffSprite(col) {
+  let c = PUFFS.get(col); if (c) return c; c = document.createElement('canvas'); c.width = c.height = 48; const x = c.getContext('2d'), gr = x.createRadialGradient(24, 24, 0, 24, 24, 24);
+  gr.addColorStop(0, `rgba(${col},1)`); gr.addColorStop(0.55, `rgba(${col},0.85)`); gr.addColorStop(1, `rgba(${col},0)`); x.fillStyle = gr; x.fillRect(0, 0, 48, 48); PUFFS.set(col, c); return c;
 }
 export class Particles {
   constructor() { this.list = []; this.max = 700; }
@@ -404,12 +427,12 @@ export class Particles {
     for (let i = 0; i < L.length; i++) {
       const p = L[i]; if (p.k !== 's' && p.k !== 'd') continue; if (!v.visible(p.x, p.y, 60)) continue;
       const X = v.sx(p.x), Y = v.sy(p.y), f = p.life / p.max;
-      if (p.k === 's') { g.fillStyle = `rgba(${p.col},${(p.a * f).toFixed(3)})`; g.beginPath(); g.arc(X, Y - (1 - f) * 20 * z, p.size * z, 0, TAU); g.fill(); }
+      if (p.k === 's') { const r = p.size * z * 1.35; g.globalAlpha = p.a * f; g.drawImage(puffSprite(p.col), X - r, Y - (1 - f) * 20 * z - r, r * 2, r * 2); }
       else { g.save(); g.translate(X, Y - (1 - f) * 8 * z); g.rotate(p.a); g.fillStyle = p.col; g.globalAlpha = Math.min(1, f * 2); g.fillRect(-p.size * z, -p.size * z * 0.6, p.size * 2 * z, p.size * 1.2 * z); g.restore(); }
     }
     g.globalAlpha = 1;
     // pass 2: additive (fire, sparks, rings)
-    g.globalCompositeOperation = 'lighter'; const spr = glowSprite();
+    g.globalCompositeOperation = 'lighter'; const spr = fireSprite();
     for (let i = 0; i < L.length; i++) {
       const p = L[i]; if (p.k === 's' || p.k === 'd') continue; if (!v.visible(p.x, p.y, 60)) continue;
       const X = v.sx(p.x), Y = v.sy(p.y), f = p.life / p.max;

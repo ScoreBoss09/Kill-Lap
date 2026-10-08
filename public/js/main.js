@@ -171,6 +171,7 @@ const app = {
     const buttons = [];
     if (cfg.mp) buttons.push({ t: 'BACK TO ROOM', cls: 'primary', fn: () => this.backToRoom() });
     else { if (nextBtn) buttons.push(nextBtn); if (cfg.career) buttons.push({ t: 'CAREER MENU', cls: nextBtn ? '' : 'primary', fn: () => { this.toMenu(); UI.go('career'); } }); else buttons.push({ t: cfg.test ? 'BACK TO EDITOR' : 'RACE AGAIN', cls: nextBtn ? '' : 'primary', fn: again }); if (!cfg.test) buttons.push({ t: 'GARAGE', fn: () => { this.toMenu(); UI.go('garage'); } }); buttons.push({ t: 'MAIN MENU', fn: () => this.toMenu() }); }
+    if (this.game) { this.game.quiet = true; this.game.destroy(); } // no engine drone behind the results screen
     this.state = 'results'; UI.render('results', { results: rows, notes, extra, buttons, track: T.name, title: tt ? 'TIME TRIAL COMPLETE' : undefined });
     UI.stack = [];
   },
@@ -247,12 +248,15 @@ function loop(now) {
   }
   Input.update(dt);
   try {
+    if (app.state === 'lineup' && app.game) app.game.ground.prebake(12); // build the terrain while the line-up is on screen
     if (app.state === 'editor') { Editor.pad(dt); Editor.draw(); }
     else if (app.state === 'race' && app.game) {
       const g = app.game;
       if (Input.drive.pauseEdge && !app.paused) app.pause();
       else if (Input.drive.pauseEdge && app.paused && UI.cur && UI.cur.name === 'pause' && !UI.modals.length) app.resume();
-      if (!app.paused || g.net) { g.frame(dt, app.paused ? NO_INPUT : Input.drive); g.updateAudio(dt); }
+      g.quiet = app.paused && !g.net; // engines fade while the pause menu is up
+      if (!app.paused || g.net) g.frame(dt, app.paused ? NO_INPUT : Input.drive);
+      if (app.state === 'race') g.updateAudio(dt);
       g.render(ctx, W, H, dt);
       if (!g.over) drawHUD(ctx, g, W, H, { fps: Store.s.fps ? app.fps : null, ping: g.net ? Net.ping : null, recordTime: (Store.d.records[g.opts.track.id] || {}).lap && g.mode === 'tt' ? Store.d.records[g.opts.track.id].lap.time : null });
       if (g.net && g.over === false && app.paused) { /* menu overlay while sim continues */ }

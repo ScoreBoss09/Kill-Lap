@@ -33,3 +33,17 @@ T.world = function (v, type, theme, sx = 0, sy = 0) {
   if (p && p.setTransform) p.setTransform(new DOMMatrix().translate(v.W / 2 - v.x * v.zoom + sx * v.zoom, v.H / 2 - v.y * v.zoom + sy * v.zoom).scale(v.zoom * (TILE[kind(key)] || 512) / img.width));
   return p;
 };
+
+/** like world(), but the texture is pre-tinted towards a colour (one fill instead of texture + tint pass) */
+T.worldTinted = function (v, type, theme, col, alpha) {
+  const key = (theme && this.images[type + '_' + theme]) ? type + '_' + theme : this.images[type] ? type : null; if (!key) return null;
+  const k2 = key + '|' + col + '|' + alpha; this.tp = this.tp || {}; this.tpt = this.tpt || {};
+  let p = this.tp[k2];
+  if (!p) {
+    const img = this.images[key], c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const x = c.getContext('2d');
+    x.drawImage(img, 0, 0); x.globalAlpha = alpha; x.fillStyle = col; x.fillRect(0, 0, c.width, c.height);
+    p = this.tp[k2] = x.createPattern(c, 'repeat'); p._w = img.width;
+  }
+  const st = v.t + ':' + v.x + ':' + v.zoom; if (this.tpt[k2] !== st && p.setTransform) { this.tpt[k2] = st; p.setTransform(new DOMMatrix().translate(v.W / 2 - v.x * v.zoom, v.H / 2 - v.y * v.zoom).scale(v.zoom * (TILE[kind(key)] || 512) / p._w)); }
+  return p;
+};

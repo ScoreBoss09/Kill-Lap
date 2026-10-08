@@ -36,6 +36,16 @@ export class Ground {
     if (!t) { t = document.createElement('canvas'); t.width = t.height = TS; this.bake(t, tx * TS, ty * TS); this.tiles.set(k, t); }
     return t;
   }
+  /** background baking: tiles along the track first (from the start line), then the rest; stops after `budgetMs` */
+  prebake(budgetMs) {
+    if (this.allBaked) return; const T = this.T;
+    if (!this.order) { const seen = new Set(), o = []; const addT = (tx, ty) => { if (tx < 0 || ty < 0 || tx >= this.cols || ty >= this.rows) return; const k = this.key(tx, ty); if (!seen.has(k)) { seen.add(k); o.push([tx, ty]); } };
+      for (let i = 0; i < T.N; i += 6) { const tx = Math.floor(T.x[i] / TS), ty = Math.floor(T.y[i] / TS); for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) addT(tx + a, ty + b); }
+      for (let ty = 0; ty < this.rows; ty++) for (let tx = 0; tx < this.cols; tx++) addT(tx, ty); this.order = o; this.oi = 0; }
+    const t0 = performance.now();
+    while (this.oi < this.order.length && performance.now() - t0 < budgetMs) { const [tx, ty] = this.order[this.oi++]; if (!this.has(tx, ty)) this.tile(tx, ty); }
+    if (this.oi >= this.order.length) this.allBaked = true;
+  }
   /** bake at most `max` missing tiles overlapping [x0..x1]x[y0..y1] */
   ensure(x0, y0, x1, y1, max = 2) {
     let n = 0;

@@ -278,7 +278,7 @@ S.series = (ctx, p) => {
   return screenFrame(s.name.toUpperCase(), h('div', { class: 'row grow gap' }, h('div', { class: 'col grow' }, h('p', { class: 'muted' }, s.blurb), trk),
     h('div', { class: 'col side-col' }, panel,
       cycle('Car', d.owned.map(id => ({ v: id, t: CAR_BY_ID[id].name })), d.car, v => { d.car = v; Store.save(); }),
-      fin ? btn('NEW CHAMPIONSHIP', start, 'primary big') : over ? null : btn(a ? `NEXT RACE (${a.race + 1}/${s.tracks.length})` : 'START SERIES', start, 'primary big'),
+      (() => { const b = fin ? btn('NEW CHAMPIONSHIP', start, 'primary big') : over ? null : btn(a ? `NEXT RACE (${a.race + 1}/${s.tracks.length})` : 'START SERIES', start, 'primary big'); if (b) b.dataset.autofocus = '1'; return b; })(),
       a && !over ? btn('ABANDON SERIES', () => UI.modal('Abandon the series?', 'Your championship progress will be lost.', [{ t: 'Keep it' }, { t: 'ABANDON', primary: true, fn: () => { d.career.active = null; Store.save(); UI.back(); } }]), 'ghost danger') : null, btn('GARAGE', () => UI.go('garage'), 'ghost'))),
     h('div', { class: 'row' }, backBtn(), hint()));
 };
