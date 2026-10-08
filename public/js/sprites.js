@@ -23,7 +23,7 @@ function shadowEllipse(g, v, x, y, rx, ry, a = 0.28) {
 function disc(g, v, x, y, h, r, fill) {
   const s = v.scale(h); g.fillStyle = fill; g.beginPath(); g.arc(v.px(x, y, h), v.py(x, y, h), r * s, 0, TAU); g.fill();
 }
-function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
+export function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
   const c = Math.cos(rot), s = Math.sin(rot), hw = w / 2, hd = d / 2;
   const corners = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([a, b]) => [cx + a * c - b * s, cy + a * s + b * c]);
   // shadow polygon
@@ -52,10 +52,10 @@ function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
   return top;
 }
 
-const WALLCOL = { adobe: ['#c79a62', '#d9b07a'], cabin: ['#7a4e2d', '#d8e2ea'], building: ['#6c6f7d', '#8a8d9b'], tower: ['#3d4558', '#566078'], container: null, hut: ['#c8a165', '#a1472f'], billboard: ['#555', '#777'] };
+const WALLCOL = { ruin: ['#7d7a70', '#5e5b52'], adobe: ['#c79a62', '#d9b07a'], cabin: ['#7a4e2d', '#d8e2ea'], building: ['#6c6f7d', '#8a8d9b'], tower: ['#3d4558', '#566078'], container: null, hut: ['#c8a165', '#a1472f'], billboard: ['#555', '#777'] };
 
 export function drawProp(g, v, p, th, t) {
-  const x = p.x, y = p.y, s = p.s, r = mulberry32((p.v * 1e9) | 0);
+  const x = p.x, y = p.y, s = p.s, r = mulberry32((p.v * 1e9) | 0), wind = Math.sin(t * 1.4 + p.v * 30) * 1.7;
   switch (p.type) {
     case 'cactus': {
       shadowEllipse(g, v, x, y, 10 * s, 6 * s);
@@ -80,14 +80,14 @@ export function drawProp(g, v, p, th, t) {
       shadowEllipse(g, v, x, y, 20 * s, 12 * s, 0.3);
       g.strokeStyle = '#4a3220'; g.lineWidth = 5 * s * v.zoom; g.beginPath(); g.moveTo(v.px(x, y, 0), v.py(x, y, 0)); g.lineTo(v.px(x, y, 28 * s), v.py(x, y, 28 * s)); g.stroke();
       const snow = p.type === 'snowpine';
-      for (let L = 0; L < 4; L++) { const h = (18 + L * 17) * s, rr = (28 - L * 6.5) * s; disc(g, v, x, y, h, rr, snow ? shade('#2f5f45', L * 0.08) : shade('#27552a', -0.1 + L * 0.1)); if (snow) disc(g, v, x, y, h + 3, rr * 0.72, rgba('#ffffff', 0.85)); }
+      for (let L = 0; L < 4; L++) { const h = (18 + L * 17) * s, rr = (28 - L * 6.5) * s, wx = x + wind * L * 0.5; disc(g, v, wx, y, h, rr, snow ? shade('#2f5f45', L * 0.08) : shade('#27552a', -0.1 + L * 0.1)); if (snow) disc(g, v, wx, y, h + 3, rr * 0.72, rgba('#ffffff', 0.85)); }
       break;
     }
     case 'oak': {
       shadowEllipse(g, v, x, y, 26 * s, 15 * s, 0.3);
       g.strokeStyle = '#5a3d25'; g.lineWidth = 7 * s * v.zoom; g.beginPath(); g.moveTo(v.px(x, y, 0), v.py(x, y, 0)); g.lineTo(v.px(x, y, 32 * s), v.py(x, y, 32 * s)); g.stroke();
-      for (let k = 0; k < 5; k++) { const a = (k / 5) * TAU + p.r, d = k ? 13 * s : 0; disc(g, v, x + Math.cos(a) * d, y + Math.sin(a) * d, 40 * s + (k % 2) * 8, 18 * s, shade('#3f7a33', -0.2 + (k % 3) * 0.12)); }
-      disc(g, v, x - 4, y - 4, 60 * s, 12 * s, shade('#5da24a', 0.05));
+      for (let k = 0; k < 5; k++) { const a = (k / 5) * TAU + p.r, d = k ? 13 * s : 0; disc(g, v, x + Math.cos(a) * d + wind * 0.7, y + Math.sin(a) * d, 40 * s + (k % 2) * 8, 18 * s, shade('#3f7a33', -0.2 + (k % 3) * 0.12)); }
+      disc(g, v, x - 4 + wind, y - 4, 60 * s, 12 * s, shade('#5da24a', 0.05));
       break;
     }
     case 'palm': {
@@ -113,6 +113,26 @@ export function drawProp(g, v, p, th, t) {
       for (let L = 0; L < 3; L++) { const hh = [0, 40 * s, 70 * s, 92 * s]; const [sc] = lv[L]; box(g, v, x, y, w * sc, d * sc, hh[L + 1] || 90, rot, shade('#a4552a', -0.1 + L * 0.1), shade('#cf8456', L * 0.06)); }
       break;
     }
+    case 'ruin': {
+      const rot = Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2) + (p.v - 0.5) * 0.25, c = Math.cos(rot), sn = Math.sin(rot);
+      box(g, v, x, y, p.w, p.d, p.h, rot, shade('#7d7a70', ((p.v * 7) % 1 - 0.5) * 0.2), '#5e5b52', { windows: 'rgba(15,15,15,0.85)' });
+      box(g, v, x + c * p.w * 0.28, y + sn * p.w * 0.28, p.w * 0.4, p.d * 0.9, p.h * 1.5, rot, '#6d6a60', '#4e4b43', { windows: 'rgba(15,15,15,0.85)' });
+      for (let k = 0; k < 6; k++) { const a = k * 1.1 + p.r, d = Math.max(p.w, p.d) * 0.62 + (k % 3) * 8; disc(g, v, x + Math.cos(a) * d, y + Math.sin(a) * d, 2, 7 + (k % 3) * 3, shade('#6f6b60', (k % 2) * 0.15 - 0.1)); }
+      break;
+    }
+    case 'sandbags': {
+      const c = Math.cos(p.r), sn = Math.sin(p.r);
+      for (let row = 0; row < 2; row++) for (let k = 0; k < 5 - row; k++) { const u = (k - 2 + row * 0.5) * 16; shadowEllipse(g, v, x + c * u, y + sn * u, 9, 6, 0.2); disc(g, v, x + c * u, y + sn * u, row * 7, 9.5, shade('#b79b66', row * 0.1 - 0.12)); disc(g, v, x + c * u - 1, y + sn * u - 1, row * 7 + 3, 6, shade('#c9ad77', row * 0.08)); }
+      break;
+    }
+    case 'tankwreck': {
+      const rot = p.r; box(g, v, x, y, 74, 40, 16, rot, '#4a3f30', '#5a4d3a', {});
+      shadowEllipse(g, v, x, y, 26, 18, 0.25); disc(g, v, x, y, 26, 14, '#3d352a'); disc(g, v, x, y, 30, 10, '#4e4436');
+      g.strokeStyle = '#2a251d'; g.lineWidth = 5 * v.zoom; g.lineCap = 'round'; g.beginPath(); g.moveTo(v.px(x, y, 30), v.py(x, y, 30)); g.lineTo(v.px(x + Math.cos(rot + 0.5) * 42, y + Math.sin(rot + 0.5) * 42, 24), v.py(x + Math.cos(rot + 0.5) * 42, y + Math.sin(rot + 0.5) * 42, 24)); g.stroke();
+      if (Math.sin(t * 2 + p.v * 20) > -0.3) disc(g, v, x + 6, y - 4, 36 + Math.sin(t * 3 + p.v * 9) * 3, 6, 'rgba(255,120,30,0.35)');
+      break;
+    }
+    case 'crater': { const X = v.sx(x), Y = v.sy(y), R = 38 * s * v.zoom; const gr = g.createRadialGradient(X, Y, R * 0.15, X, Y, R); gr.addColorStop(0, 'rgba(10,8,6,0.85)'); gr.addColorStop(0.7, 'rgba(30,24,18,0.7)'); gr.addColorStop(0.9, 'rgba(120,105,80,0.5)'); gr.addColorStop(1, 'rgba(120,105,80,0)'); g.fillStyle = gr; g.beginPath(); g.ellipse(X, Y, R, R * 0.82, p.r, 0, TAU); g.fill(); break; }
     case 'adobe': case 'cabin': case 'building': case 'hut': case 'tower': {
       const [wc, rc] = WALLCOL[p.type]; const night = th.night;
       const rot = Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2) + (p.v - 0.5) * 0.2;
@@ -178,22 +198,22 @@ export function drawProp2Glow(g, v, p, t) {
 /* ------------------------------------------------------------------ pickups & hazards */
 export const ITEM_COL = { repair: '#ff4d4d', ammo: '#ffd23a', cash: '#4cff7a', nitro: '#3ab8ff' };
 export function drawItem(g, v, it, t) {
-  const x = it.x, y = it.y;
+  const x = it.x, y = it.y, iz = it.z || 0, SX = v.px(x, y, iz), SY = v.py(x, y, iz);
   if (it.t === 'boost') {
-    g.save(); g.translate(v.sx(x), v.sy(y)); g.rotate(it.a); g.scale(v.zoom, v.zoom);
+    g.save(); g.translate(SX, SY); g.rotate(it.a); g.scale(v.zoom, v.zoom);
     g.fillStyle = 'rgba(0,10,30,0.55)'; g.fillRect(-34, -28, 68, 56);
     for (let k = 0; k < 3; k++) { const o = ((t * 2 + k * 0.33) % 1); g.globalAlpha = Math.sin(o * Math.PI); g.fillStyle = '#31e2ff'; const px = -26 + o * 52; g.beginPath(); g.moveTo(px + 12, 0); g.lineTo(px - 4, -20); g.lineTo(px - 12, -20); g.lineTo(px + 4, 0); g.lineTo(px - 12, 20); g.lineTo(px - 4, 20); g.closePath(); g.fill(); }
     g.restore(); return;
   }
   if (it.t === 'oil') {
-    g.save(); g.translate(v.sx(x), v.sy(y)); g.scale(v.zoom, v.zoom * 0.85);
+    g.save(); g.translate(SX, SY); g.scale(v.zoom, v.zoom * 0.85);
     const gr = g.createRadialGradient(-6, -6, 2, 0, 0, 40); gr.addColorStop(0, 'rgba(60,70,90,0.95)'); gr.addColorStop(0.6, 'rgba(10,10,14,0.92)'); gr.addColorStop(1, 'rgba(10,10,14,0)');
     g.fillStyle = gr; g.beginPath(); g.ellipse(0, 0, 42, 30, 0.4, 0, TAU); g.fill();
     g.strokeStyle = `hsla(${(t * 60) % 360},80%,60%,0.35)`; g.lineWidth = 2; g.beginPath(); g.ellipse(-4, -3, 22, 14, 0.4, 0, TAU); g.stroke(); g.restore(); return;
   }
-  const col = ITEM_COL[it.t] || '#fff', bob = 16 + Math.sin(t * 3 + it.id) * 3;
-  g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(v.sx(x) + 6 * v.zoom, v.sy(y) + 6 * v.zoom, 14 * v.zoom, 8 * v.zoom, 0, 0, TAU); g.fill();
-  const gr = g.createRadialGradient(v.sx(x), v.sy(y), 0, v.sx(x), v.sy(y), 34 * v.zoom); gr.addColorStop(0, rgba(col, 0.5)); gr.addColorStop(1, rgba(col, 0)); g.fillStyle = gr; g.beginPath(); g.arc(v.sx(x), v.sy(y), 34 * v.zoom, 0, TAU); g.fill();
+  const col = ITEM_COL[it.t] || '#fff', bob = iz + 9 + Math.sin(t * 3 + it.id) * 2.5;
+  g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(SX + 6 * v.zoom, SY + 6 * v.zoom, 14 * v.zoom, 8 * v.zoom, 0, 0, TAU); g.fill();
+  const gr = g.createRadialGradient(SX, SY, 0, SX, SY, 34 * v.zoom); gr.addColorStop(0, rgba(col, 0.5)); gr.addColorStop(1, rgba(col, 0)); g.fillStyle = gr; g.beginPath(); g.arc(SX, SY, 34 * v.zoom, 0, TAU); g.fill();
   const X = v.px(x, y, bob), Y = v.py(x, y, bob), s = v.scale(bob);
   g.save(); g.translate(X, Y); g.scale(s, s); g.rotate(Math.sin(t * 2 + it.id) * 0.2);
   g.fillStyle = '#10131a'; g.strokeStyle = col; g.lineWidth = 2.5; g.beginPath(); g.roundRect(-12, -12, 24, 24, 5); g.fill(); g.stroke();
@@ -209,19 +229,54 @@ export function drawItem(g, v, it, t) {
 function rr(g, x, y, w, h, r) { g.beginPath(); g.roundRect(x, y, w, h, r); }
 /** draw one layer of a car in local space at height h (car faces +x) */
 function layer(g, v, c, h, fn) {
+  h += c.z || 0;
   const s = v.scale(h), cs = Math.cos(c.a), sn = Math.sin(c.a);
   g.save(); g.setTransform(s * cs, s * sn, -s * sn, s * cs, v.px(c.x, c.y, h), v.py(c.x, c.y, h)); fn(); g.restore();
 }
+
+/** visible equipment: armour plating, spikes, turret, rear guard, missile pods */
+function drawMods(g, v, c, t) {
+  const m = c.mods; if (!m) return; const L = c.len, Wd = c.wid, hl = L / 2, hwid = Wd / 2;
+  const steel = '#9aa4b2', dark = '#5c6573', bolt = '#d7dde6';
+  if (m.armor > 0) layer(g, v, c, 11, () => {
+    g.fillStyle = steel; g.fillRect(-hl * 0.66, -hwid - 0.6, L * 0.62, 3.6); g.fillRect(-hl * 0.66, hwid - 3, L * 0.62, 3.6);
+    g.fillStyle = dark; g.fillRect(-hl * 0.66, -hwid + 2.3, L * 0.62, 0.9); g.fillRect(-hl * 0.66, hwid - 3.2, L * 0.62, 0.9);
+    if (m.armor >= 2) { g.fillStyle = steel; rr(g, hl * 0.12, -hwid * 0.58, hl * 0.78, hwid * 1.16, 3); g.fill(); g.strokeStyle = dark; g.lineWidth = 1; g.beginPath(); for (let k = 0; k < 3; k++) { g.moveTo(hl * 0.2 + k * 5, -hwid * 0.5); g.lineTo(hl * 0.3 + k * 5, 0); g.lineTo(hl * 0.2 + k * 5, hwid * 0.5); } g.stroke(); }
+    if (m.armor >= 3) { g.fillStyle = dark; g.fillRect(-hl * 0.7, -hwid * 0.62, 2.4, hwid * 1.24); g.fillRect(-hl * 0.1, -hwid * 0.7, 2.4, hwid * 1.4); g.fillStyle = steel; g.fillRect(-hl * 0.66, -hwid * 0.7, 1.8, hwid * 1.4); }
+    if (m.armor >= 4) { g.fillStyle = bolt; for (let k = 0; k < 6; k++) { g.beginPath(); g.arc(-hl * 0.6 + k * (L * 0.58 / 5), -hwid + 1.2, 0.8, 0, TAU); g.arc(-hl * 0.6 + k * (L * 0.58 / 5), hwid - 1.2, 0.8, 0, TAU); g.fill(); } g.strokeStyle = '#ffd23a'; g.lineWidth = 1; g.strokeRect(-hl * 0.64, -hwid + 0.2, L * 0.58, Wd - 0.4); }
+  });
+  const spikeRow = (x, dir, lv) => layer(g, v, c, 7, () => {
+    const n = 2 + lv * 2, len = 4.5 + lv * 2.4; g.fillStyle = '#cfd6df'; g.strokeStyle = '#6b7380'; g.lineWidth = 0.6;
+    g.fillStyle = dark; g.fillRect(x - (dir > 0 ? 1.5 : 0.5), -hwid + 1, 2, Wd - 2); g.fillStyle = '#cfd6df';
+    for (let k = 0; k < n; k++) { const y = -hwid + 2.5 + (k + 0.5) * (Wd - 5) / n; g.beginPath(); g.moveTo(x, y - 2); g.lineTo(x + dir * len, y); g.lineTo(x, y + 2); g.closePath(); g.fill(); g.stroke(); }
+  });
+  if (m.fs) spikeRow(hl, 1, m.fs); if (m.rs) spikeRow(-hl, -1, m.rs);
+  if (m.ws) { const sp = Math.hypot(c.vx || 0, c.vy || 0); for (const [wx, wy] of [[hl * 0.62, -1], [hl * 0.62, 1], [-hl * 0.62, -1], [-hl * 0.62, 1]]) layer(g, v, c, 4, () => {
+    g.translate(wx, wy * (hwid + 0.5)); g.rotate(t * (2 + sp / 90) * wy); const len = 3.6 + m.ws * 1.7; g.fillStyle = '#d5dae0'; g.strokeStyle = '#6b7380'; g.lineWidth = 0.5;
+    for (let k = 0; k < 6; k++) { g.save(); g.rotate(k * Math.PI / 3); g.beginPath(); g.moveTo(1.2, -1.4); g.lineTo(1.2 + len, 0); g.lineTo(1.2, 1.4); g.closePath(); g.fill(); g.stroke(); g.restore(); } g.fillStyle = '#333'; g.beginPath(); g.arc(0, 0, 1.8, 0, TAU); g.fill(); }); }
+  if (m.homing) layer(g, v, c, 16, () => { for (const s of [-1, 1]) { g.fillStyle = '#2d3340'; rr(g, hl * 0.12, s * hwid * 0.62 - 2.4, hl * 0.62, 4.8, 1.4); g.fill(); g.fillStyle = '#cfe8ff'; for (let k = 0; k < 3; k++) { g.beginPath(); g.arc(hl * 0.68 - k * 4.2, s * hwid * 0.62, 1.3, 0, TAU); g.fill(); } } });
+  if (m.cluster) layer(g, v, c, 17, () => { g.fillStyle = '#4a5a3a'; g.beginPath(); g.arc(-hl * 0.72, 0, 4.6, 0, TAU); g.fill(); g.strokeStyle = '#d8c64a'; g.lineWidth = 1.4; g.beginPath(); g.arc(-hl * 0.72, 0, 3, 0, TAU); g.stroke(); });
+  if (m.guard) layer(g, v, c, 24, () => {
+    g.translate(-hl * 0.52, 0); g.fillStyle = '#2d3340'; rr(g, -4, -4, 8, 8, 2); g.fill(); g.save(); g.rotate(t * 3); g.strokeStyle = '#9fe3ff'; g.lineWidth = 1.4; g.beginPath(); g.arc(0, 0, 6, -0.7, 0.7); g.stroke(); g.restore();
+    for (let k = 0; k < m.guard; k++) { g.fillStyle = k < (c.guard ?? m.guard) ? '#46ff7a' : '#444'; g.beginPath(); g.arc(-3 + k * 3, 4.8, 0.95, 0, TAU); g.fill(); }
+    if (c.guardFlash > 0) { g.strokeStyle = `rgba(120,220,255,${c.guardFlash * 2})`; g.lineWidth = 2; g.beginPath(); g.arc(0, 0, 14 + (0.35 - c.guardFlash) * 40, 0, TAU); g.stroke(); }
+  });
+  if (m.turret) layer(g, v, c, 24, () => {
+    g.fillStyle = '#2b303b'; g.beginPath(); g.arc(hl * 0.02, 0, 5.4, 0, TAU); g.fill(); g.strokeStyle = '#7f8999'; g.lineWidth = 1; g.stroke();
+    g.save(); g.translate(hl * 0.02, 0); g.rotate((c.turA ?? c.a) - c.a); g.fillStyle = '#4f5868'; g.fillRect(0, -1.5, 9 + m.turret * 1.5, 3); g.fillStyle = '#20242c'; g.fillRect(8 + m.turret * 1.5, -1.9, 2.6, 3.8); g.fillStyle = '#7dffe8'; g.beginPath(); g.arc(-1, 0, 1.4, 0, TAU); g.fill(); g.restore();
+  });
+}
+
 export function drawCar(g, v, c, t, opts = {}) {
   const L = c.len, Wd = c.wid, col = c.color, hl = L / 2, hwid = Wd / 2;
   if (c.dead) return;
   const flash = c.invuln > 0 && Math.floor(t * 14) % 2 === 0;
   if (flash) g.globalAlpha = 0.45;
   // shadow
-  g.save(); g.setTransform(v.zoom * Math.cos(c.a), v.zoom * Math.sin(c.a), -v.zoom * Math.sin(c.a), v.zoom * Math.cos(c.a), v.sx(c.x) + 7 * v.zoom, v.sy(c.y) + 9 * v.zoom); g.fillStyle = 'rgba(0,0,0,0.34)'; rr(g, -hl - 1, -hwid - 1, L + 2, Wd + 2, 7); g.fill(); g.restore();
+  { const zr = c.zRoad || 0, air = c.zAir || 0, sc = v.scale(zr); g.save(); g.setTransform(sc * Math.cos(c.a), sc * Math.sin(c.a), -sc * Math.sin(c.a), sc * Math.cos(c.a), v.px(c.x, c.y, zr) + (7 + air * 0.35) * v.zoom, v.py(c.x, c.y, zr) + (9 + air * 0.3) * v.zoom); g.fillStyle = `rgba(0,0,0,${0.34 / (1 + air / 60)})`; rr(g, -hl - 1, -hwid - 1, L + 2, Wd + 2, 7); g.fill(); g.restore(); }
   // night headlights
   if (opts.night) {
-    g.save(); g.globalCompositeOperation = 'lighter'; g.setTransform(v.zoom * Math.cos(c.a), v.zoom * Math.sin(c.a), -v.zoom * Math.sin(c.a), v.zoom * Math.cos(c.a), v.sx(c.x), v.sy(c.y));
+    g.save(); g.globalCompositeOperation = 'lighter'; g.setTransform(v.zoom * Math.cos(c.a), v.zoom * Math.sin(c.a), -v.zoom * Math.sin(c.a), v.zoom * Math.cos(c.a), v.px(c.x, c.y, c.z || 0), v.py(c.x, c.y, c.z || 0));
     const gr = g.createLinearGradient(hl, 0, hl + 230, 0); gr.addColorStop(0, 'rgba(255,245,200,0.45)'); gr.addColorStop(1, 'rgba(255,245,200,0)');
     g.fillStyle = gr; g.beginPath(); g.moveTo(hl - 4, -7); g.lineTo(hl + 230, -75); g.lineTo(hl + 230, 75); g.lineTo(hl - 4, 7); g.closePath(); g.fill(); g.restore();
   }
@@ -265,6 +320,8 @@ export function drawCar(g, v, c, t, opts = {}) {
     g.fillStyle = shade(col, 0.05); rr(g, off - cw / 2 + cw * 0.28, -hwid + 5, cw * 0.5, Wd - 10, 3); g.fill();
   });
   if (shape === 'sport' || shape === 'muscle') layer(g, v, c, 21, () => { g.fillStyle = shade(col, -0.35); g.fillRect(-hl - 1, -hwid + 1, 4, Wd - 2); });
+  if (c.braking) layer(g, v, c, 9, () => { g.globalCompositeOperation = 'lighter'; for (const sy of [-1, 1]) { const gr = g.createRadialGradient(-hl, sy * (hwid - 4), 0, -hl, sy * (hwid - 4), 16); gr.addColorStop(0, 'rgba(255,40,30,0.8)'); gr.addColorStop(1, 'rgba(255,40,30,0)'); g.fillStyle = gr; g.beginPath(); g.arc(-hl, sy * (hwid - 4), 16, 0, TAU); g.fill(); } });
+  drawMods(g, v, c, t);
   // damage overlay
   const hpf = c.hp / c.maxHp;
   if (hpf < 0.6) layer(g, v, c, 14, () => { g.fillStyle = `rgba(20,10,5,${(0.6 - hpf) * 0.8})`; g.beginPath(); g.ellipse(hl * 0.25, 3, hl * 0.4, hwid * 0.5, 0.4, 0, TAU); g.fill(); g.beginPath(); g.ellipse(-hl * 0.4, -4, hl * 0.28, hwid * 0.4, 0, 0, TAU); g.fill(); });
@@ -278,18 +335,26 @@ export function drawCar(g, v, c, t, opts = {}) {
 
 /* ------------------------------------------------------------------ projectiles */
 export function drawProjectile(g, v, p, t) {
+  const pz = p.z || 9;
   if (p.type === 'mg') {
-    const X = v.sx(p.x), Y = v.sy(p.y), l = 16 * v.zoom, a = Math.atan2(p.vy, p.vx);
-    g.save(); g.globalCompositeOperation = 'lighter'; g.strokeStyle = 'rgba(255,200,80,0.95)'; g.lineWidth = 2.4 * v.zoom; g.lineCap = 'round'; g.beginPath(); g.moveTo(X, Y); g.lineTo(X - Math.cos(a) * l, Y - Math.sin(a) * l); g.stroke(); g.restore();
-  } else if (p.type === 'rocket') {
-    const a = Math.atan2(p.vy, p.vx), X = v.px(p.x, p.y, 14), Y = v.py(p.x, p.y, 14);
-    g.save(); g.globalCompositeOperation = 'lighter'; const gr = g.createLinearGradient(X, Y, X - Math.cos(a) * 60 * v.zoom, Y - Math.sin(a) * 60 * v.zoom); gr.addColorStop(0, 'rgba(255,220,120,0.9)'); gr.addColorStop(1, 'rgba(255,80,20,0)');
-    g.strokeStyle = gr; g.lineWidth = 9 * v.zoom; g.lineCap = 'round'; g.beginPath(); g.moveTo(X, Y); g.lineTo(X - Math.cos(a) * 60 * v.zoom, Y - Math.sin(a) * 60 * v.zoom); g.stroke(); g.restore();
-    g.save(); g.translate(X, Y); g.rotate(a); g.scale(v.zoom, v.zoom); g.fillStyle = '#d8d8d8'; rr(g, -9, -3, 18, 6, 2); g.fill(); g.fillStyle = '#c0392b'; g.beginPath(); g.moveTo(9, -3); g.lineTo(15, 0); g.lineTo(9, 3); g.fill(); g.restore();
+    const X = v.px(p.x, p.y, pz), Y = v.py(p.x, p.y, pz), l = 16 * v.zoom, a = Math.atan2(p.vy, p.vx);
+    g.save(); g.globalCompositeOperation = 'lighter'; g.strokeStyle = p.turret ? 'rgba(120,255,230,0.95)' : 'rgba(255,200,80,0.95)'; g.lineWidth = 2.4 * v.zoom; g.lineCap = 'round'; g.beginPath(); g.moveTo(X, Y); g.lineTo(X - Math.cos(a) * l, Y - Math.sin(a) * l); g.stroke(); g.restore();
+  } else if (p.type === 'rocket' || p.type === 'homing') {
+    const hm = p.type === 'homing', a = Math.atan2(p.vy, p.vx), X = v.px(p.x, p.y, pz + 5), Y = v.py(p.x, p.y, pz + 5), L = (hm ? 70 : 60) * v.zoom;
+    g.save(); g.globalCompositeOperation = 'lighter'; const gr = g.createLinearGradient(X, Y, X - Math.cos(a) * L, Y - Math.sin(a) * L); gr.addColorStop(0, hm ? 'rgba(160,255,255,0.95)' : 'rgba(255,220,120,0.9)'); gr.addColorStop(1, hm ? 'rgba(40,160,255,0)' : 'rgba(255,80,20,0)');
+    g.strokeStyle = gr; g.lineWidth = (hm ? 7 : 9) * v.zoom; g.lineCap = 'round'; g.beginPath(); g.moveTo(X, Y); g.lineTo(X - Math.cos(a) * L, Y - Math.sin(a) * L); g.stroke(); g.restore();
+    g.save(); g.translate(X, Y); g.rotate(a); g.scale(v.zoom, v.zoom); g.fillStyle = hm ? '#cfe8ff' : '#d8d8d8'; rr(g, -9, -3, 18, 6, 2); g.fill(); g.fillStyle = hm ? '#1e88e5' : '#c0392b'; g.beginPath(); g.moveTo(9, -3); g.lineTo(15, 0); g.lineTo(9, 3); g.fill(); g.fillStyle = '#555'; g.fillRect(-9, -6, 4, 3); g.fillRect(-9, 3, 4, 3); g.restore();
+  } else if (p.type === 'cluster') {
+    const X = v.px(p.x, p.y, pz + 10), Y = v.py(p.x, p.y, pz + 10);
+    g.fillStyle = 'rgba(0,0,0,0.25)'; g.beginPath(); g.ellipse(v.px(p.x, p.y, 0) + 5, v.py(p.x, p.y, 0) + 6, 7 * v.zoom, 5 * v.zoom, 0, 0, TAU); g.fill();
+    g.save(); g.translate(X, Y); g.scale(v.zoom, v.zoom); g.rotate(t * 9); g.fillStyle = '#4a5a3a'; g.beginPath(); g.arc(0, 0, 7, 0, TAU); g.fill(); g.fillStyle = '#c8d86a'; for (let k = 0; k < 6; k++) { g.beginPath(); g.arc(Math.cos(k) * 4.2, Math.sin(k) * 4.2, 1.6, 0, TAU); g.fill(); } g.restore();
+  } else if (p.type === 'bomblet') {
+    const X = v.px(p.x, p.y, pz + 4), Y = v.py(p.x, p.y, pz + 4);
+    g.fillStyle = '#2a2d22'; g.beginPath(); g.arc(X, Y, 4.2 * v.zoom, 0, TAU); g.fill(); g.fillStyle = Math.floor(t * 14) % 2 ? '#ff4a2a' : '#661a10'; g.beginPath(); g.arc(X, Y, 1.8 * v.zoom, 0, TAU); g.fill();
   }
 }
 export function drawMine(g, v, m, t) {
-  const armed = m.arm <= 0, X = v.px(m.x, m.y, 3), Y = v.py(m.x, m.y, 3);
+  const armed = m.arm <= 0, X = v.px(m.x, m.y, 3 + (m.z || 0)), Y = v.py(m.x, m.y, 3 + (m.z || 0));
   g.save(); g.translate(X, Y); g.scale(v.zoom, v.zoom);
   g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(3, 3, 12, 8, 0, 0, TAU); g.fill();
   g.fillStyle = '#2b2d33'; g.beginPath(); g.arc(0, 0, 11, 0, TAU); g.fill(); g.fillStyle = '#41444d'; g.beginPath(); g.arc(0, -1, 8.5, 0, TAU); g.fill();

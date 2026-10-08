@@ -3,7 +3,7 @@ const id = process.argv[2] || 'neon';
 const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
 const p = await b.newPage({ viewport: { width: 1920, height: 1080 } });
 await p.goto('http://localhost:3000/'); await p.waitForTimeout(1200);
-await p.evaluate(async id => { const { findTrack } = await import('/js/ui.js'); await KL.startRace({ mode: 'race', track: findTrack(id), laps: 3, opp: 11, diff: 2, weapons: true, carId: 'scrapper' }); KL.game.human.auto = true; }, id);
+await p.evaluate(async id => { const { findTrack } = await import('/js/ui.js'); await KL.startRace({ mode: 'race', track: findTrack(id), laps: 3, opp: 11, diff: 2, weapons: true, carId: 'scrapper' }); (KL.state === 'lineup') && KL.beginRace(KL.game.opts.track); KL.game.human.auto = true; }, id);
 await p.waitForTimeout(6000);
 const cdp = await p.context().newCDPSession(p); await cdp.send('Profiler.enable'); await cdp.send('Profiler.start');
 await p.evaluate(() => { const g = KL.game, c = document.getElementById('game').getContext('2d'); for (let i = 0; i < 150; i++) { g.frame(1 / 60, {}); g.render(c, c.canvas.width, c.canvas.height, 1 / 60); } });

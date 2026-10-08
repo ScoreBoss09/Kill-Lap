@@ -10,6 +10,8 @@ export const ACTIONS = [
   { id: 'rocket',   label: 'Rocket',       keys: ['KeyE', 'ControlLeft'], pad: 'X' },
   { id: 'mine',     label: 'Drop mine',    keys: ['KeyF', 'AltLeft'],    pad: 'B' },
   { id: 'nitro',    label: 'Nitro boost',  keys: ['ShiftLeft', 'ShiftRight'], pad: 'Y' },
+  { id: 'special',  label: 'Special weapon (missiles / cluster)', keys: ['KeyG', 'ControlRight'], pad: 'D-pad up' },
+  { id: 'cycle',    label: 'Switch special weapon', keys: ['KeyQ'], pad: 'D-pad down' },
   { id: 'hb',       label: 'Handbrake',    keys: ['KeyC', 'KeyX'],       pad: 'RB' },
   { id: 'reset',    label: 'Respawn on track', keys: ['KeyR'],           pad: 'LB (hold)' },
   { id: 'scores',   label: 'Scoreboard',   keys: ['Tab'],                pad: 'Back / View' },
@@ -18,7 +20,7 @@ export const ACTIONS = [
 
 const Input = {
   keys: new Set(), pressedEdge: new Set(), binds: {}, deadzone: 0.14, sens: 1.0, lastDevice: 'kb', pad: null, padName: '',
-  drive: { steer: 0, throttle: 0, brake: 0, hb: false, fire: false, rocket: false, mine: false, nitro: false, reset: false, scores: false },
+  drive: { steer: 0, throttle: 0, brake: 0, hb: false, fire: false, rocket: false, mine: false, nitro: false, special: false, cycleEdge: false, reset: false, scores: false },
   navListeners: new Set(), padPrev: {}, repeat: {}, rumbleOn: true, enabled: true,
 };
 export default Input;
@@ -51,7 +53,7 @@ const dz = (v, d) => (Math.abs(v) < d ? 0 : Math.sign(v) * (Math.abs(v) - d) / (
 Input.update = function (dt) {
   const p = this.getPad(), d = this.drive, K = id => this.down(id);
   let steer = (K('right') ? 1 : 0) - (K('left') ? 1 : 0), thr = K('throttle') ? 1 : 0, brk = K('brake') ? 1 : 0;
-  let hb = K('hb'), fire = K('fire'), rocket = K('rocket'), mine = K('mine'), nitro = K('nitro'), reset = K('reset'), scores = K('scores');
+  let hb = K('hb'), fire = K('fire'), rocket = K('rocket'), mine = K('mine'), nitro = K('nitro'), reset = K('reset'), scores = K('scores'), special = K('special');
   // smooth keyboard steering
   d._ks = d._ks || 0; const target = steer; d._ks += clamp(target - d._ks, -dt * (target === 0 ? 9 : 6.5), dt * (target === 0 ? 9 : 6.5)); steer = d._ks;
   const btn = i => !!(p && p.buttons[i] && p.buttons[i].pressed), val = i => (p && p.buttons[i] ? p.buttons[i].value : 0);
@@ -65,10 +67,10 @@ Input.update = function (dt) {
     if (used) {
       steer = clamp(Math.abs(padSteer) > Math.abs(steer) ? padSteer : steer, -1, 1);
       thr = Math.max(thr, padThr); brk = Math.max(brk, padBrk);
-      fire = fire || btn(0); mine = mine || btn(1); rocket = rocket || btn(2); nitro = nitro || btn(3); hb = hb || btn(5); reset = reset || btn(4); scores = scores || btn(8);
+      special = special || btn(12); fire = fire || btn(0); mine = mine || btn(1); rocket = rocket || btn(2); nitro = nitro || btn(3); hb = hb || btn(5); reset = reset || btn(4); scores = scores || btn(8);
     }
     // button edges for menus
-    const now = { ok: btn(0), back: btn(1), x: btn(2), y: btn(3), start: btn(9), up: btn(12) || ay < -0.6, down: btn(13) || ay > 0.6, left: btn(14) || ax < -0.6, right: btn(15) || ax > 0.6, lb: btn(4), rb: btn(5) };
+    const now = { ok: btn(0), back: btn(1), x: btn(2), y: btn(3), start: btn(9), up: btn(12) || ay < -0.6, down: btn(13) || ay > 0.6, left: btn(14) || ax < -0.6, right: btn(15) || ax > 0.6, lb: btn(4), rb: btn(5), dpadDown: btn(13) };
     for (const k in now) {
       const was = this.padPrev[k]; let fireEv = false;
       if (now[k] && !was) { fireEv = true; this.repeat[k] = 0.4; }
@@ -78,6 +80,7 @@ Input.update = function (dt) {
     }
   }
   d.steer = steer; d.throttle = thr; d.brake = brk; d.hb = hb; d.fire = fire; d.rocket = rocket; d.mine = mine; d.nitro = nitro; d.reset = reset; d.scores = scores;
+  d.special = special; d.cycleEdge = this.edge('cycle') || !!edges.dpadDown;
   d.pauseEdge = this.edge('pause') || !!edges.start;
   d.nitroEdge = this.edge('nitro') || !!(p && edges.y);
   for (const k in edges) for (const f of this.navListeners) f(k);

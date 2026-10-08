@@ -32,6 +32,8 @@ Tip: press **F11** for fullscreen, or use *Settings -> Toggle fullscreen*. In Ch
 | Rocket (homing lock-on) | `E` or `Ctrl` | `X` |
 | Drop mine | `F` or `Alt` | `B` |
 | Nitro boost | `Shift` | `Y` |
+| Special weapon (homing missiles / cluster bombs) | `G` or `Right Ctrl` | `D-pad up` |
+| Switch special weapon | `Q` | `D-pad down` |
 | Handbrake (drift) | `C` | `RB` |
 | Respawn on track (hold) | `R` | `LB` |
 | Scoreboard | `Tab` | `Back / View` |
@@ -42,8 +44,14 @@ Keyboard bindings can be changed in *Controls*. Gamepad dead-zone, steering sens
 ## Game modes
 
 * **Quick Race** - pick any track, 1-11 AI opponents, 4 difficulties, weapons on/off.
-* **Career** - four series (Rookie Cup, Pro Circuit, Elite League, Legend Run). Championship points decide the title, prize money buys cars and upgrades. Finish a series on the podium to unlock the next.
-* **Garage** - six cars (Scrapper, Hornet, Bruiser, Phantom, Reaper, Warlord), six upgrade tracks (engine, tyres, armour, guns, rockets, nitro), paint colours, sell-back.
+* **Career** - four series (Rookie Cup, Pro Circuit, Elite League, Legend Run) against the same seven named rivals. Championship points decide the title, prize money buys cars and upgrades. Your overall position is shown on the career cards, the series screen and the main menu. Races can't be re-run (quitting forfeits it). **Finishing a series earns new equipment** (see below) and unlocks the next series.
+* **Garage** - six cars (Scrapper, Hornet, Bruiser, Phantom, Reaper, Warlord), paint colours, sell-back, and two kinds of upgrade:
+  * *Performance* (always available): engine, tyres, armour plating (visible on the car), machine gun, rockets & mines, nitro.
+  * *Equipment* (**earned by finishing career series**): front / rear / wheel **spikes** (Rookie Cup), roof **auto-turret** and **rear guard** that shoots down rockets from behind (Pro Circuit), **homing missiles** and **cluster bombs** (Elite League). Everything you fit is drawn on your car.
+* **Weapons are locked on the first lap** for everyone. The rocket is unguided; homing missiles are the guided option.
+* **Rivals with personalities** - 16 named drivers with portraits, bios and driving styles (aggressive, precise, defensive...). A "Meet the field" screen shows who you're racing.
+* **Track hazards** - level crossings with a **train** that flattens anything in its way, a **pedestrian crossing** in the city, **water fords**, **jump ramps**, erupting **lava vents**, a **tidal wave** sweeping the coast road, and an **air raid** in the Warzone where a bomber drops bombs (marked on the road a moment before they land).
+* **Raised roads** - flyovers where the track crosses over itself, tunnels through hills, and real 3D barriers.
 * **Time Trial** - chase your **ghost**; your best lap is saved per track.
 * **Daily Challenge** - a new generated track every day, one global leaderboard.
 * **Multiplayer** - lobby, rooms (with optional password), chat, ready-up, host settings (track, laps, AI bots, upgrades on/off, weapons on/off), up to 12 racers.
@@ -69,22 +77,22 @@ Netcode: each client simulates its own car and broadcasts it at 20 Hz; projectil
 
 Open **Map Editor** from the main menu.
 
-* **Road mode (1)** - click to add points (new points are inserted into the nearest part of the loop), drag to move, right-click to delete. The road is a smooth closed spline. `Shift+wheel` or `[` `]` changes the width at the selected point. Reverse, scale and subdivide buttons are in the panel.
-* **Pickups mode (2)** - repair, ammo, cash, nitro, boost pads, oil slicks. Automatic pickups can be turned off if you want to place everything by hand.
+* **Road mode (1)** - click to add points (new points are inserted into the nearest part of the loop), drag to move, right-click to delete. The road is a smooth closed spline. `Shift+wheel` or `[` `]` changes the width at the selected point. With a point selected, the side panel has **Road height** (raise neighbouring points to build a flyover; where roads cross, one must be 50+ higher) and **Tunnel here**. Reverse, scale and subdivide buttons are in the panel.
+* **Pickups mode (2)** - repair, ammo, cash, nitro, boost pads, oil slicks, plus hazards: jump ramps, fords, train crossings, pedestrian crossings, lava vents, tidal waves and air raids. Automatic pickups and hazards can be turned off if you want to place everything by hand.
 * **Scenery mode (3)** - place trees, buildings, rocks, containers, palm trees... anywhere outside the barriers.
-* 8 themes (desert, forest, alpine, neon city, foundry, inferno, coastal, red canyon); the editor warns if the road crosses itself or has an impossible corner.
+* 9 themes (desert, forest, alpine, neon city, foundry, inferno, coastal, red canyon, warzone); the editor warns if the road crosses itself or has an impossible corner.
 * **Test Drive (T)** saves and drops you straight on the track; quit returns to the editor.
 * **Export / Import** share maps as `.killlap.json` files. **Publish** uploads to the server Workshop, where it appears under *Workshop* in any track picker (and in multiplayer rooms).
-* Mouse: wheel = zoom, middle-drag or `Space`-drag = pan. **Gamepad:** left stick = cursor, right stick = pan, `A` = place/grab, `X` = delete, `Y` = switch tool, `LB/RB` = width, `Start` = test drive.
+* Mouse: wheel = zoom, middle-drag or `Space`-drag = pan. **Gamepad:** left stick = cursor, right stick = pan, `A` = place/grab, `X` = delete, `Y` = switch tool, `LB/RB` = width, `Start` = test drive, and **`View/Back` switches to menu mode** so the stick/D-pad can reach the top toolbar and side panel (`A` presses, left/right changes values, `B` returns to the map).
 
 Track file format (what you can hand-edit):
 
 ```json
 { "name": "My Track", "theme": "desert", "width": 160, "laps": 3, "seed": 123,
-  "pts":   [[x, y], [x, y, widthOverride], ...],
+  "pts":   [[x, y], [x, y, widthOverride|null, height, tunnel(0|1)], ...],
   "items": [{ "t": "repair|ammo|cash|nitro|boost|oil", "x": 0, "y": 0 }],
   "props": [{ "type": "pine", "x": 0, "y": 0, "s": 1, "r": 0 }],
-  "auto": true, "dens": 1.0 }
+  "auto": true, "hazards": true, "bomber": false, "dens": 1.0 }
 ```
 
 ## Your own music and sound effects
@@ -113,8 +121,11 @@ public/index.html       the game page
 public/css/style.css    menu styling
 public/js/main.js       app shell: main loop, race lifecycle, career, rewards
 public/js/game.js       race simulation: physics, weapons, AI, laps, pickups, net sync, world rendering
-public/js/tracks.js     track format, spline compiler, collision queries, scenery, 14 built-in maps, generator
-public/js/ground.js     lazily baked terrain tiles (road, kerbs, walls, decals), minimap
+public/js/tracks.js     track format, spline compiler, collision queries, scenery, 21 built-in maps, generator
+public/js/ground.js     lazily baked terrain tiles (road, kerbs, decals), minimap
+public/js/structures.js 3D barriers, raised decks, pillars, tunnels
+public/js/hazards.js    trains, pedestrians, fords, ramps, lava, tidal wave, bomber
+public/js/drivers.js    rival roster and procedural portraits
 public/js/sprites.js    pseudo-3D props/buildings/cars/particles
 public/js/hud.js        in-race HUD
 public/js/ui.js         menu system (keyboard + mouse + gamepad navigation)

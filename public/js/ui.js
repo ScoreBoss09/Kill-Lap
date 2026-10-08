@@ -5,8 +5,9 @@ import Store, { SERIES, POINTS, ACHIEVEMENTS } from './storage.js';
 import Net, { api, serverBase } from './net.js';
 import { BUILTIN_TRACKS, TRACK_BY_ID, THEMES, compileTrack, generateTrack } from './tracks.js';
 import { makeMinimap } from './ground.js';
-import { CARS, CAR_BY_ID, UPGRADES, UPG_KEYS, PAINTS, carStats, carValue, DIFFICULTIES } from './cars.js';
+import { CARS, CAR_BY_ID, UPGRADES, UPG_KEYS, PERF_KEYS, MOD_KEYS, PAINTS, carStats, carValue, DIFFICULTIES } from './cars.js';
 import { fmtTime, fmtMoney, clamp, shade } from './util.js';
+import { portrait, driverFor, DRIVERS } from './drivers.js';
 
 const root = () => document.getElementById('ui');
 export const h = (tag, attrs, ...kids) => {
@@ -49,7 +50,7 @@ UI.render = function (name, params) {
 };
 UI.hide = function () { root().classList.add('hide'); this.hidden = true; document.activeElement && document.activeElement.blur && document.activeElement.blur(); };
 UI.show = function () { root().classList.remove('hide'); this.hidden = false; };
-UI.scope = function () { return this.modals.length ? this.modals[this.modals.length - 1].el : root(); };
+UI.scope = function () { return this.modals.length ? this.modals[this.modals.length - 1].el : (this.editorScope || root()); };
 UI.navs = function () { return [...this.scope().querySelectorAll('.nv')].filter(e => !e.disabled && !e.hasAttribute('data-disabled') && e.offsetParent !== null); };
 UI.focusFirst = function () { const n = this.navs(); const pre = this.scope().querySelector('.nv[data-autofocus]'); (pre || n[0]) && this.focus(pre || n[0], true); };
 UI.focus = function (el, silent) {
@@ -126,6 +127,10 @@ export function slider(label, min, max, step, value, onChange, fmt = v => Math.r
 export function toggle(label, value, onChange) { return cycle(label, [{ v: false, t: 'OFF' }, { v: true, t: 'ON' }], !!value, onChange); }
 const stars = n => '★'.repeat(n) + '☆'.repeat(5 - n);
 export const screenFrame = (title, ...kids) => h('div', { class: 'frame' }, h('div', { class: 'frame-head' }, h('h1', null, title), h('div', { class: 'chips' }, h('span', { class: 'chip' }, '$ ' + Store.d.cash.toLocaleString('en-US')), h('span', { class: 'chip' }, Store.d.name))), ...kids);
+/** small portrait + name, used in tables */
+export function avatarCell(name, size = 28) { const c = portrait(name, size * 2); const cv = document.createElement('canvas'); cv.width = cv.height = size * 2; cv.getContext('2d').drawImage(c, 0, 0); cv.style.width = cv.style.height = size + 'px'; cv.className = 'avatar'; return h('span', { class: 'avcell' }, cv, h('span', null, name)); }
+const standingOf = (a, name) => { const rows = Object.entries(a.points).sort((x, y) => y[1] - x[1]); return { pos: rows.findIndex(([n]) => n === name) + 1, of: rows.length, pts: a.points[name] || 0 }; };
+const MEDAL = ['🥇', '🥈', '🥉'];
 const backBtn = (label = '◀ BACK') => btn(label, () => UI.back(), 'ghost');
 const hint = () => h('div', { class: 'hint' }, Input.lastDevice === 'pad' ? 'D-Pad / Stick: navigate    A: select    B: back' : '↑↓←→ / mouse: navigate    Enter: select    Esc: back');
 
@@ -194,6 +199,7 @@ function trackPicker(selectedId, onPick, { allowWorkshop = true } = {}) {
 /* ------------------------------------------------------------------ screens */
 const S = UI.screens;
 
+const careerLine = d => { const a = d.career.active; if (!a) return null; const sr = SERIES.find(x => x.id === a.id), st = standingOf(a, d.name); return h('div', { class: 'careerline' }, '🏁 ' + sr.name, h('br'), `Overall: P${st.pos} of ${st.of} · ${st.pts} pts · race ${a.race}/${sr.tracks.length}`); };
 S.title = (ctx) => {
   const d = Store.d, items = [
     ['QUICK RACE', () => UI.go('setup', { mode: 'race' })],
@@ -210,7 +216,7 @@ S.title = (ctx) => {
     h('div', { class: 'logo' }, h('div', { class: 'logo-top' }, 'TOP-DOWN VEHICULAR COMBAT RACING'), h('div', { class: 'logo-main', 'data-t': 'KILL LAP' }, 'KILL LAP'), h('div', { class: 'logo-sub' }, 'DRIVE FAST · SHOOT FIRST · FINISH FIRST')),
     h('div', { class: 'menu' }, items.map(([t, fn]) => btn(t, fn, 'big'))),
     h('div', { class: 'side' },
-      h('div', { class: 'panel' }, h('div', { class: 'pname' }, d.name), h('div', { class: 'pcash' }, fmtMoney(d.cash)), h('div', { class: 'small' }, `${d.stats.races} races · ${d.stats.wins} wins · ${d.stats.kills} kills`)),
+      h('div', { class: 'panel' }, h('div', { class: 'pname' }, d.name), h('div', { class: 'pcash' }, fmtMoney(d.cash)), h('div', { class: 'small' }, `${d.stats.races} races · ${d.stats.wins} wins · ${d.stats.kills} kills`), careerLine(d)),
       btn('🏆 ACHIEVEMENTS', () => UI.go('achievements'), 'ghost'), btn('🎮 CONTROLS', () => UI.go('controls'), 'ghost'), btn('ℹ CREDITS', () => UI.go('credits'), 'ghost')),
     hint());
   return el;
@@ -246,49 +252,69 @@ S.setup = (ctx, p) => {
 S.career = (ctx) => {
   const d = Store.d, done = d.career.done, active = d.career.active;
   const cards = SERIES.map(s => {
-    const locked = s.need && !done[s.need], fin = done[s.id];
-    return h('button', { class: 'scard nv' + (locked ? ' locked' : ''), 'data-disabled': locked ? '1' : null, onclick: () => { if (locked) { UI.toast('Finish the ' + SERIES.find(x => x.id === s.need).name + ' first', 'bad'); return; } UI.go('series', { id: s.id }); } },
+    const locked = s.need && !done[s.need], fin = done[s.id], fl = d.career.final[s.id], act = active && active.id === s.id;
+    let tag = locked ? '🔒 LOCKED' : act ? (() => { const st = standingOf(active, d.name); return `▶ IN PROGRESS - race ${active.race}/${s.tracks.length} · overall P${st.pos}/${st.of} (${st.pts} pts)`; })() : fin ? `${MEDAL[fin - 1] || '🏁'} FINISHED - best overall P${fin}` : 'READY';
+    return h('button', { class: 'scard nv' + (locked ? ' locked' : '') + (act ? ' active' : ''), 'data-disabled': locked ? '1' : null, onclick: () => { if (locked) { UI.toast('Finish the ' + SERIES.find(x => x.id === s.need).name + ' first', 'bad'); return; } UI.go('series', { id: s.id }); } },
       h('div', { class: 'sn' }, s.name), h('div', { class: 'small' }, s.blurb), h('div', { class: 'meta' }, `${s.tracks.length} races · ${DIFFICULTIES[s.diff].name} bots · ${s.laps} laps`),
-      h('div', { class: 'tag' }, locked ? '🔒 LOCKED' : fin ? '🏁 FINISHED - best P' + fin : active && active.id === s.id ? '▶ IN PROGRESS' : 'READY'));
+      h('div', { class: 'meta' }, '🔓 Unlocks: ' + (Object.values(UPGRADES).filter(u => u.need === s.id).map(u => u.name).join(', ') || (SERIES.find(x => x.need === s.id) || {}).name || '-')), h('div', { class: 'tag' }, tag));
   });
-  return screenFrame('CAREER', h('p', { class: 'muted' }, 'Win cash, buy faster cars, bolt on bigger guns. Points decide the championship; prize money decides your garage.'), h('div', { class: 'cards' }, cards), h('div', { class: 'row' }, backBtn(), btn('GARAGE', () => UI.go('garage'), 'ghost'), hint()));
+  return screenFrame('CAREER', h('p', { class: 'muted' }, 'Win cash, buy faster cars, and earn new gear: finish each series to unlock spikes, turrets, rear guards, homing missiles and cluster bombs. Races cannot be re-run - quitting a race forfeits it.'), h('div', { class: 'cards' }, cards), h('div', { class: 'row' }, backBtn(), btn('GARAGE', () => UI.go('garage'), 'ghost'), hint()));
 };
 S.series = (ctx, p) => {
-  const s = SERIES.find(x => x.id === p.id), d = Store.d; let a = d.career.active && d.career.active.id === s.id ? d.career.active : null;
-  const over = a && a.race >= s.tracks.length;
-  const standings = () => { if (!a) return null; const rows = Object.entries(a.points).sort((x, y) => y[1] - x[1]); return h('table', { class: 'tbl' }, h('tr', null, h('th', null, '#'), h('th', null, 'Driver'), h('th', null, 'Pts')), rows.map(([n, pts], i) => h('tr', { class: n === d.name ? 'me' : '' }, h('td', null, i + 1), h('td', null, n), h('td', null, pts)))); };
-  const trk = h('div', { class: 'tracklist' }, s.tracks.map((id, i) => { const t = findTrack(id); return h('div', { class: 'tl' + (a && i < a.race ? ' done' : a && i === a.race ? ' now' : '') }, h('span', null, (i + 1) + '.'), trackThumb(t, 64), h('div', null, h('b', null, t.name), h('div', { class: 'small' }, (THEMES[t.theme] || {}).name))); }));
+  const s = SERIES.find(x => x.id === p.id), d = Store.d; let a = d.career.active && d.career.active.id === s.id ? d.career.active : null; const fin = !a && d.career.final[s.id];
+  const standingsTbl = (rows) => h('table', { class: 'tbl' }, h('tr', null, h('th', null, '#'), h('th', null, 'Driver'), h('th', null, 'Pts')), rows.map(([n, pts], i) => h('tr', { class: n === d.name ? 'me' : '' }, h('td', null, MEDAL[i] || i + 1), h('td', null, avatarCell(n)), h('td', null, pts))));
+  const trk = h('div', { class: 'tracklist' }, s.tracks.map((id, i) => { const t = findTrack(id); const doneRace = fin || (a && i < a.race); return h('div', { class: 'tl' + (doneRace ? ' done' : a && i === a.race ? ' now' : '') }, h('span', null, (i + 1) + '.'), trackThumb(t, 64), h('div', null, h('b', null, t.name), h('div', { class: 'small' }, (THEMES[t.theme] || {}).name)), doneRace ? h('span', { class: 'small' }, '✔ done') : null); }));
   const start = () => {
-    if (!a) { a = d.career.active = { id: s.id, race: 0, points: { [d.name]: 0 }, cash: 0 }; const names = ['Rusty', 'Viper', 'Mad Dog', 'Sledge', 'Hex', 'Blitz', 'Havoc', 'Grim']; names.forEach(n => a.points[n] = 0); Store.save(); }
-    UI.app.startRace({ mode: 'race', track: findTrack(s.tracks[a.race]), laps: s.laps, opp: 7, diff: s.diff, weapons: true, carId: d.car, career: { id: s.id, idx: a.race } });
+    if (!a) { const roster = DRIVERS.map(dr => dr.name).sort(() => Math.random() - 0.5).slice(0, 7); a = d.career.active = { id: s.id, race: 0, points: { [d.name]: 0 }, cash: 0, roster }; roster.forEach(n => a.points[n] = 0); delete d.career.final[s.id]; Store.save(); }
+    UI.app.startRace({ mode: 'race', track: findTrack(s.tracks[a.race]), laps: s.laps, opp: 7, diff: s.diff, weapons: true, carId: d.car, roster: a.roster, career: { id: s.id, idx: a.race } });
   };
+  let panel;
+  if (a) { const st = standingOf(a, d.name); panel = h('div', { class: 'panel' }, h('h3', null, 'CHAMPIONSHIP'), h('div', { class: 'standing' }, `You are P${st.pos} of ${st.of}`, h('span', null, ` · ${st.pts} pts`)), standingsTbl(Object.entries(a.points).sort((x, y) => y[1] - x[1]))); }
+  else if (fin) panel = h('div', { class: 'panel' }, h('h3', null, 'FINAL STANDINGS'), h('div', { class: 'standing' }, `${MEDAL[fin.place - 1] || '🏁'} You finished P${fin.place} of ${fin.standings.length}`), standingsTbl(fin.standings));
+  else panel = h('div', { class: 'panel' }, h('h3', null, 'PRIZE MONEY'), s.prize.map((v, i) => h('div', null, `P${i + 1}: ${fmtMoney(v)}`)));
+  const over = a && a.race >= s.tracks.length;
   return screenFrame(s.name.toUpperCase(), h('div', { class: 'row grow gap' }, h('div', { class: 'col grow' }, h('p', { class: 'muted' }, s.blurb), trk),
-    h('div', { class: 'col side-col' }, a ? h('div', { class: 'panel' }, h('h3', null, 'CHAMPIONSHIP'), standings()) : h('div', { class: 'panel' }, h('h3', null, 'PRIZE MONEY'), s.prize.map((v, i) => h('div', null, `P${i + 1}: ${fmtMoney(v)}`))),
+    h('div', { class: 'col side-col' }, panel,
       cycle('Car', d.owned.map(id => ({ v: id, t: CAR_BY_ID[id].name })), d.car, v => { d.car = v; Store.save(); }),
-      over ? btn('SERIES COMPLETE - NEW SERIES', () => { d.career.active = null; Store.save(); UI.back(); }, 'primary') : btn(a ? `NEXT RACE (${a.race + 1}/${s.tracks.length})` : 'START SERIES', start, 'primary big'),
-      a && !over ? btn('ABANDON SERIES', () => { d.career.active = null; Store.save(); UI.back(); }, 'ghost danger') : null, btn('GARAGE', () => UI.go('garage'), 'ghost'))),
+      fin ? btn('NEW CHAMPIONSHIP', start, 'primary big') : over ? null : btn(a ? `NEXT RACE (${a.race + 1}/${s.tracks.length})` : 'START SERIES', start, 'primary big'),
+      a && !over ? btn('ABANDON SERIES', () => UI.modal('Abandon the series?', 'Your championship progress will be lost.', [{ t: 'Keep it' }, { t: 'ABANDON', primary: true, fn: () => { d.career.active = null; Store.save(); UI.back(); } }]), 'ghost danger') : null, btn('GARAGE', () => UI.go('garage'), 'ghost'))),
     h('div', { class: 'row' }, backBtn(), hint()));
 };
 
 /* ---- garage */
 S.garage = (ctx, p) => {
-  const d = Store.d; let sel = p && p.sel || d.car; const box = h('div', { class: 'garage' });
-  const cv = h('canvas', { width: 420, height: 260, class: 'gcar' });
-  const draw = () => UI.app.drawCarPreview(cv, sel, d.paints[sel]);
-  const build = () => {
-    box.innerHTML = ''; const c = CAR_BY_ID[sel], own = Store.owns(sel), upg = Store.upgOf(sel), st = carStats(sel, upg), base = carStats(sel, {}), max = { top: 600, accel: 500, grip: 1.5, steer: 1.4, hp: 330 };
-    const bar = (label, v, m, col) => h('div', { class: 'bar' }, h('span', null, label), h('div', { class: 'bg' }, h('div', { class: 'fg', style: `width:${clamp(v / m, 0, 1) * 100}%;background:${col}` })), h('span', { class: 'bv' }, Math.round(v * (m < 3 ? 100 : 1)) + (m < 3 ? '%' : '')));
-    const list = h('div', { class: 'carlist' }, CARS.map(x => h('button', { class: 'ccard nv' + (x.id === sel ? ' sel' : ''), onclick: () => { sel = x.id; build(); draw(); } }, h('span', { class: 'cdot', style: `background:${(d.paints[x.id] || x.color)}` }), h('span', null, x.name), h('span', { class: 'cp' }, Store.owns(x.id) ? (d.car === x.id ? 'ACTIVE' : 'OWNED') : fmtMoney(x.price)))));
-    const up = h('div', { class: 'ups' }, own ? UPG_KEYS.map(k => { const u = UPGRADES[k], lv = upg[k] | 0, cost = lv < u.max ? u.cost[lv] : null; return h('div', { class: 'up' }, h('div', { class: 'un' }, h('b', null, u.name), h('span', { class: 'small' }, u.desc)), h('div', { class: 'pips' }, Array.from({ length: u.max }, (_, i) => h('i', { class: i < lv ? 'on' : '' }))), cost != null ? btn(fmtMoney(cost), () => { if (Store.buyUpgrade(sel, k)) { Audio.sfx('cash'); build(); UI.refreshChips(); } else UI.toast('Not enough cash', 'bad'); }, 'mini' + (d.cash < cost ? ' dim' : '')) : h('span', { class: 'maxed' }, 'MAX')); }) : h('div', { class: 'muted' }, 'Buy this car to fit upgrades.'));
-    const paints = own ? h('div', { class: 'paints' }, PAINTS.map(col => h('button', { class: 'pt nv', style: `background:${col}`, onclick: () => { d.paints[sel] = col; Store.save(); build(); draw(); } }))) : null;
-    box.append(h('div', { class: 'row gap grow' }, list, h('div', { class: 'col grow' }, cv, h('h2', null, c.name), h('p', { class: 'muted' }, c.desc),
-      bar('Top speed', st.top, max.top, '#ff6a1a'), bar('Acceleration', st.accel, max.accel, '#ffd23a'), bar('Grip', st.grip, max.grip, '#46d16a'), bar('Handling', st.steer, max.steer, '#46b7ff'), bar('Armour', st.hp, max.hp, '#ee4b35'), paints),
-      h('div', { class: 'col side-col' }, own ? [d.car === sel ? h('div', { class: 'tag' }, '✔ ACTIVE CAR') : btn('USE THIS CAR', () => { d.car = sel; Store.save(); build(); }, 'primary'), up, sel !== 'scrapper' ? btn('SELL (' + fmtMoney(carValue(sel, upg) * 0.5) + ')', () => { UI.modal('Sell ' + c.name + '?', 'You will get ' + fmtMoney(carValue(sel, upg) * 0.5) + ' back.', [{ t: 'Cancel' }, { t: 'SELL', primary: true, fn: () => { Store.sellCar(sel); sel = d.car; build(); draw(); UI.refreshChips(); } }]); }, 'ghost danger') : null] : [h('div', { class: 'price' }, fmtMoney(c.price)), btn('BUY', () => { if (Store.buyCar(sel)) { d.car = sel; Store.save(); Audio.sfx('cash'); UI.toast('Bought the ' + c.name + '!'); build(); UI.refreshChips(); } else UI.toast('Not enough cash - go win some races!', 'bad'); }, 'primary big' + (d.cash < c.price ? ' dim' : ''))])));
-    UI.focusFirst();
+  const d = Store.d; let sel = (p && p.sel) || d.car;
+  const cv = h('canvas', { width: 420, height: 260, class: 'gcar' }), detail = h('div', { class: 'col grow' }), side = h('div', { class: 'col side-col' });
+  const list = h('div', { class: 'carlist' });
+  const cards = {};
+  const stat = (label, v, m, col) => h('div', { class: 'bar' }, h('span', null, label), h('div', { class: 'bg' }, h('div', { class: 'fg', style: `width:${clamp(v / m, 0, 1) * 100}%;background:${col}` })), h('span', { class: 'bv' }, Math.round(v * (m < 3 ? 100 : 1)) + (m < 3 ? '%' : '')));
+  const draw = () => UI.app.drawCarPreview(cv, sel, d.paints[sel], Store.owns(sel) ? Store.upgOf(sel) : {});
+  const refocus = key => { if (!key) return; const el = UI.scope().querySelector(`[data-k="${key}"]`); if (el) UI.focus(el, true); };
+  const lbl = key => { const u = UPGRADES[key], lv = Store.upgOf(sel)[key] | 0, ok = Store.unlocked(key), cost = lv < u.max ? u.cost[lv] : null; const need = u.need && SERIES.find(x => x.id === u.need);
+    return h('div', { class: 'up' + (ok ? '' : ' locked') }, h('div', { class: 'un' }, h('b', null, (ok ? '' : '🔒 ') + u.name), h('span', { class: 'small' }, ok ? u.desc : 'Finish the ' + need.name + ' in Career to unlock')),
+      h('div', { class: 'pips' }, Array.from({ length: u.max }, (_, i) => h('i', { class: i < lv ? 'on' : '' }))),
+      !ok ? h('span', { class: 'maxed' }, 'LOCKED') : cost != null ? h('button', { class: 'btn nv mini' + (d.cash < cost ? ' dim' : ''), 'data-k': 'up-' + key, onclick: () => { if (Store.buyUpgrade(sel, key)) { Audio.sfx('cash'); build('up-' + key); UI.refreshChips(); draw(); } else UI.toast('Not enough cash', 'bad'); } }, fmtMoney(cost)) : h('span', { class: 'maxed' }, 'MAX')); };
+  const build = keep => {
+    const c = CAR_BY_ID[sel], own = Store.owns(sel), upg = own ? Store.upgOf(sel) : {}, st = carStats(sel, upg), max = { top: 640, accel: 520, grip: 1.6, steer: 1.5, hp: 400 };
+    Object.entries(cards).forEach(([id, el]) => { el.classList.toggle('sel', id === sel); el.querySelector('.cp').textContent = Store.owns(id) ? (d.car === id ? 'ACTIVE' : 'OWNED') : fmtMoney(CAR_BY_ID[id].price); el.querySelector('.cdot').style.background = d.paints[id] || CAR_BY_ID[id].color; });
+    detail.innerHTML = ''; side.innerHTML = '';
+    const paints = own ? h('div', { class: 'paints' }, PAINTS.map(col => h('button', { class: 'pt nv', 'data-k': 'paint-' + col, style: `background:${col}`, onclick: () => { d.paints[sel] = col; Store.save(); build('paint-' + col); draw(); } }))) : null;
+    detail.append(cv, h('h2', null, c.name), h('p', { class: 'muted' }, c.desc), stat('Top speed', st.top, max.top, '#ff6a1a'), stat('Acceleration', st.accel, max.accel, '#ffd23a'), stat('Grip', st.grip, max.grip, '#46d16a'), stat('Handling', st.steer, max.steer, '#46b7ff'), stat('Armour', st.hp, max.hp, '#ee4b35'), paints);
+    if (own) {
+      side.append(d.car === sel ? h('div', { class: 'tag' }, '✔ ACTIVE CAR') : btn('USE THIS CAR', () => { d.car = sel; Store.save(); build('use'); }, 'primary'),
+        h('h3', null, 'Performance'), h('div', { class: 'ups' }, PERF_KEYS.map(lbl)), h('h3', null, 'Equipment · earned in Career'), h('div', { class: 'ups' }, MOD_KEYS.map(lbl)),
+        sel !== 'scrapper' ? btn('SELL (' + fmtMoney(carValue(sel, upg) * 0.5) + ')', () => { UI.modal('Sell ' + c.name + '?', 'You will get ' + fmtMoney(carValue(sel, upg) * 0.5) + ' back.', [{ t: 'Cancel' }, { t: 'SELL', primary: true, fn: () => { Store.sellCar(sel); sel = d.car; build(); draw(); UI.refreshChips(); } }]); }, 'ghost danger') : null);
+      side.firstChild.setAttribute && side.firstChild.setAttribute('data-k', 'use');
+    } else side.append(h('div', { class: 'price' }, fmtMoney(c.price)), btn('BUY', () => { if (Store.buyCar(sel)) { d.car = sel; Store.save(); Audio.sfx('cash'); UI.toast('Bought the ' + c.name + '!'); build('use'); UI.refreshChips(); draw(); } else UI.toast('Not enough cash - go win some races!', 'bad'); }, 'primary big' + (d.cash < c.price ? ' dim' : '')));
+    refocus(keep);
   };
-  build(); setTimeout(draw, 30);
-  ctx.cleanup = () => {};
-  const f = screenFrame('GARAGE', box, h('div', { class: 'row' }, backBtn(), hint())); return f;
+  let ready = false; const choose = id => { if (!ready || id === sel) return; sel = id; build(); draw(); };
+  for (const x of CARS) {
+    const el = h('button', { class: 'ccard nv', 'data-k': 'car-' + x.id, onclick: () => choose(x.id) }, h('span', { class: 'cdot' }), h('span', null, x.name), h('span', { class: 'cp' }));
+    el.addEventListener('focus', () => choose(x.id)); cards[x.id] = el; list.append(el);
+  }
+  build(); setTimeout(() => { draw(); const el = cards[sel]; if (el) UI.focus(el, true); setTimeout(() => { ready = true; }, 40); }, 30);
+  return screenFrame('GARAGE', h('div', { class: 'row gap grow' }, list, detail, side), h('div', { class: 'row' }, backBtn(), hint()));
 };
 
 /* ---- multiplayer */
@@ -459,10 +485,20 @@ S.pause = (ctx, p) => {
     btn('RESUME', p.resume, 'primary big'), p.restart ? btn('RESTART RACE', p.restart, 'big') : null, btn('SETTINGS', () => UI.go('settings'), 'big'), btn('CONTROLS', () => UI.go('controls'), 'big'), btn('QUIT TO MENU', p.quit, 'big danger')));
 };
 S.results = (ctx, p) => {
-  const r = p.results, me = r.find(x => x.human) || r[0]; const rows = r.map(x => h('tr', { class: x.human ? 'me' : '' }, h('td', null, x.place), h('td', null, h('span', { class: 'cdot', style: `background:${x.color}` }), ' ' + x.name), h('td', null, x.time != null ? (x.est ? '~' : '') + fmtTime(x.time) : 'DNF'), h('td', null, x.best != null ? fmtTime(x.best) : '-'), h('td', null, x.kills), h('td', null, x.place <= 3 ? ['🥇', '🥈', '🥉'][x.place - 1] : '')));
+  const r = p.results, me = r.find(x => x.human) || r[0]; const rows = r.map(x => h('tr', { class: x.human ? 'me' : '' }, h('td', null, x.place), h('td', null, h('span', { class: 'cdot', style: `background:${x.color}` }), ' ', avatarCell(x.name)), h('td', null, x.time != null ? (x.est ? '~' : '') + fmtTime(x.time) : 'DNF'), h('td', null, x.best != null ? fmtTime(x.best) : '-'), h('td', null, x.kills), h('td', null, x.place <= 3 ? ['🥇', '🥈', '🥉'][x.place - 1] : '')));
   const notes = (p.notes || []).map(n => h('div', { class: 'note ' + (n.cls || '') }, n.text));
   return h('div', { class: 'frame results' }, h('div', { class: 'frame-head' }, h('h1', null, p.title || (me.place === 1 ? 'VICTORY!' : 'RACE OVER')), h('div', { class: 'chips' }, h('span', { class: 'chip' }, p.track))),
     h('div', { class: 'row grow gap' }, h('div', { class: 'col grow' }, h('table', { class: 'tbl' }, h('tr', null, h('th', null, '#'), h('th', null, 'Driver'), h('th', null, 'Time'), h('th', null, 'Best lap'), h('th', null, 'Kills'), h('th')), rows)), h('div', { class: 'col side-col' }, notes, p.extra || null)),
     h('div', { class: 'row end gap' }, p.buttons.map(b => btn(b.t, b.fn, b.cls || ''))));
+};
+S.lineup = (ctx, p) => {
+  let left = 9, done = false; const go = () => { if (done) return; done = true; clearInterval(tm); p.go(); };
+  const timer = h('span', { class: 'small' }, ''); const tm = setInterval(() => { left--; timer.textContent = left > 0 ? `Starting in ${left}s...` : ''; if (left <= 0) go(); }, 1000); timer.textContent = `Starting in ${left}s...`;
+  ctx.cleanup = () => clearInterval(tm); ctx.onBack = () => { go(); return false; };
+  const cards = p.drivers.map(dv => { const dr = driverFor(dv.name), st = carStats(dv.carId, dv.upg || {}); const cv = document.createElement('canvas'); cv.width = cv.height = 192; cv.getContext('2d').drawImage(portrait(dv.name, 192), 0, 0);
+    const mods = ['fs', 'rs', 'ws', 'turret', 'guard', 'homing', 'cluster'].filter(k => st.mods[k] > 0).map(k => ({ fs: 'front spikes', rs: 'rear spikes', ws: 'wheel spikes', turret: 'turret', guard: 'rear guard', homing: 'homing', cluster: 'cluster bombs' }[k]));
+    return h('div', { class: 'dcard' }, cv, h('div', { class: 'dinfo' }, h('b', null, dr.name), h('div', { class: 'nick' }, '"' + dr.nick + '"'), h('div', { class: 'small' }, dr.bio), h('div', { class: 'meta' }, `${dr.style} · ${st.name}`), mods.length ? h('div', { class: 'small gold' }, '⚙ ' + mods.join(', ')) : null,
+      h('div', { class: 'dstats' }, h('span', null, 'SPEED ', '★'.repeat(Math.round((dr.skill - 0.9) * 25)).padEnd(3, '☆')), h('span', null, 'AGGRESSION ', '★'.repeat(clamp(Math.round(dr.aggr * 2.2), 1, 3)).padEnd(3, '☆'))))); });
+  return h('div', { class: 'frame lineup' }, h('div', { class: 'frame-head' }, h('h1', null, 'MEET THE FIELD'), h('div', { class: 'chips' }, h('span', { class: 'chip' }, p.track))), h('div', { class: 'dgrid' }, cards), h('div', { class: 'row' }, timer, (() => { const b = btn('START RACE ▶', go, 'primary big'); b.setAttribute('data-autofocus', '1'); return b; })(), h('span', { class: 'hint' }, 'Weapons unlock after the first lap')));
 };
 S.loading = (ctx, p) => h('div', { class: 'loading' }, h('div', { class: 'spin' }), h('div', null, p.text || 'LOADING...'));

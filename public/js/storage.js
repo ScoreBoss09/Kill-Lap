@@ -1,10 +1,10 @@
 // Local profile, settings, records, ghosts and custom tracks (localStorage). Everything is wrapped in try/catch so the game still runs without storage.
-import { CARS, UPG_KEYS, UPGRADES, carValue } from './cars.js';
+import { CARS, UPG_KEYS, PERF_KEYS, UPGRADES, carValue } from './cars.js';
 
 const KEY = 'killlap.v1';
 const DEFAULTS = () => ({
   name: 'Racer' + Math.floor(Math.random() * 900 + 100), cash: 2500, owned: ['scrapper'], car: 'scrapper', paints: {}, upg: { scrapper: {} },
-  career: { done: {}, active: null }, records: {}, ghosts: {}, stats: { races: 0, wins: 0, podiums: 0, kills: 0, deaths: 0, laps: 0, pickups: 0, crashes: 0, playTime: 0, earned: 0, topSpeed: 0, dmgDealt: 0 },
+  career: { done: {}, active: null, final: {} }, records: {}, ghosts: {}, stats: { races: 0, wins: 0, podiums: 0, kills: 0, deaths: 0, laps: 0, pickups: 0, crashes: 0, playTime: 0, earned: 0, topSpeed: 0, dmgDealt: 0, roadkill: 0, trainHits: 0 },
   achievements: {}, customTracks: {}, server: '', daily: {},
   settings: { master: 0.8, music: 0.5, sfx: 0.85, quality: 2, fps: false, shake: true, rumble: true, deadzone: 0.14, sens: 1.0, online: true, fullscreen: false, zoom: 660, binds: {}, mapRes: 1 },
 });
@@ -21,8 +21,10 @@ const Store = {
   upgOf(carId) { return (this.d.upg[carId] ||= {}); },
   owns(id) { return this.d.owned.includes(id); },
   buyCar(id) { const c = CARS.find(x => x.id === id); if (!c || this.owns(id) || this.d.cash < c.price) return false; this.d.cash -= c.price; this.d.owned.push(id); this.d.upg[id] ||= {}; this.save(); return true; },
+  /** equipment ("mods") is earned by finishing career series; performance parts are always available */
+  unlocked(key) { const n = UPGRADES[key].need; return !n || !!this.d.career.done[n]; },
   buyUpgrade(carId, key) {
-    const lv = this.upgOf(carId)[key] | 0, u = UPGRADES[key]; if (lv >= u.max) return false; const cost = u.cost[lv]; if (this.d.cash < cost) return false;
+    const lv = this.upgOf(carId)[key] | 0, u = UPGRADES[key]; if (lv >= u.max || !this.unlocked(key)) return false; const cost = u.cost[lv]; if (this.d.cash < cost) return false;
     this.d.cash -= cost; this.upgOf(carId)[key] = lv + 1; this.save(); return true;
   },
   sellCar(id) { if (id === 'scrapper' || !this.owns(id)) return false; const v = Math.floor(carValue(id, this.upgOf(id)) * 0.5); this.d.cash += v; this.d.owned = this.d.owned.filter(x => x !== id); delete this.d.upg[id]; if (this.d.car === id) this.d.car = 'scrapper'; this.save(); return v; },
@@ -60,6 +62,9 @@ export const ACHIEVEMENTS = [
   { id: 'rich', name: 'Fat Cat', desc: 'Hold $50,000 at once.', test: s => s.cash >= 50000 },
   { id: 'garage', name: 'Collector', desc: 'Own 4 cars.', test: s => s.owned.length >= 4 },
   { id: 'maxed', name: 'Fully Loaded', desc: 'Max out any upgrade.', test: s => Object.values(s.upg).some(u => UPG_KEYS.some(k => (u[k] | 0) >= UPGRADES[k].max)) },
+  { id: 'roadkill', name: 'Road Rage', desc: 'Run over 5 pedestrians.', test: s => s.stats.roadkill >= 5 },
+  { id: 'train', name: 'Wrong Place, Wrong Time', desc: 'Get hit by a train.', test: s => s.stats.trainHits >= 1 },
+  { id: 'armed', name: 'Armed to the Teeth', desc: 'Fit spikes, a turret and homing missiles on one car.', test: s => Object.values(s.upg).some(u => (u.fspikes | 0) && (u.turret | 0) && (u.homing | 0)) },
   { id: 'rookie', name: 'Rookie of the Year', desc: 'Finish the Rookie Cup.', test: s => !!s.career.done.rookie },
   { id: 'legend', name: 'Living Legend', desc: 'Win the Legend Run.', test: s => s.career.done.legend === 1 },
   { id: 'mp', name: 'Social Menace', desc: 'Win an online race.', test: (s, r) => r.online && r.place === 1 && r.humans > 1 },

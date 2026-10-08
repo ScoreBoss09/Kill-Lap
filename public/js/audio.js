@@ -93,6 +93,13 @@ export const SYN = {
   oil(A, d) { A.burst({ f: 2500, f2: 800, d: 0.4, type: 'bandpass', g: 0.3, dest: d }); },
   empty(A, d) { A.tone({ f: 160, d: 0.07, type: 'square', g: 0.25, dest: d }); },
   chat(A, d) { A.tone({ f: 1100, d: 0.05, type: 'sine', g: 0.1, dest: d }); A.tone({ f: 1500, d: 0.07, type: 'sine', g: 0.1, t: A.ctx.currentTime + 0.05, dest: d }); },
+  horn(A, d) { A.tone({ f: 311, d: 1.1, type: 'sawtooth', g: 0.28, lp: 1400, dest: d }); A.tone({ f: 392, d: 1.1, type: 'sawtooth', g: 0.26, lp: 1400, dest: d }); A.tone({ f: 233, d: 1.1, type: 'square', g: 0.12, lp: 900, dest: d }); },
+  bell(A, d) { A.tone({ f: 1480, d: 0.35, type: 'sine', g: 0.3, dest: d }); A.tone({ f: 2220, d: 0.25, type: 'sine', g: 0.14, dest: d }); },
+  siren(A, d) { A.tone({ f: 500, f2: 900, d: 1.1, type: 'sawtooth', g: 0.2, lp: 2200, dest: d }); A.tone({ f: 900, f2: 500, d: 1.1, type: 'sawtooth', g: 0.2, lp: 2200, t: A.ctx.currentTime + 1.05, dest: d }); },
+  splash(A, d) { A.burst({ f: 1400, f2: 500, d: 0.35, type: 'bandpass', g: 0.7, q: 0.6, dest: d }); },
+  thud(A, d) { A.tone({ f: 130, f2: 50, d: 0.18, g: 0.6, dest: d }); A.burst({ f: 900, f2: 200, d: 0.12, g: 0.35, dest: d }); },
+  rumble(A, d) { A.burst({ f: 220, f2: 70, d: 1.2, g: 0.9, dest: d }); A.tone({ f: 55, f2: 35, d: 1.1, g: 0.6, dest: d }); },
+  whoosh(A, d) { A.burst({ f: 300, f2: 1800, d: 1.2, type: 'bandpass', g: 0.4, q: 0.7, dest: d }); A.tone({ f: 80, f2: 60, d: 1.4, type: 'sawtooth', g: 0.12, lp: 500, dest: d }); },
   warn(A, d) { A.tone({ f: 880, d: 0.09, type: 'square', g: 0.18, dest: d }); },
 };
 /** play a named sound; opts: vol (0..1), pan (-1..1), rate */

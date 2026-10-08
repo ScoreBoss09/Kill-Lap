@@ -18,7 +18,7 @@ await tap(0); await p.waitForTimeout(600); console.log('A pressed ->', await p.e
 await tap(1); await p.waitForTimeout(400); console.log('B (back) ->', await p.evaluate(() => document.querySelector('.logo-main') ? 'title' : 'other'));
 // race with the pad
 await p.evaluate(async () => { const { findTrack } = await import('/js/ui.js'); await KL.startRace({ mode: 'race', track: findTrack('dustbowl'), laps: 2, opp: 3, diff: 1, weapons: true, carId: 'scrapper' }); });
-await p.waitForTimeout(5200);
+await p.waitForTimeout(800); console.log('lineup shown:', await p.evaluate(() => KL.state)); await tap(0); await p.waitForTimeout(5200); console.log('A on lineup ->', await p.evaluate(() => KL.state));
 await p.evaluate(() => { __press(7, 1); });   // RT accelerate
 const a0 = await p.evaluate(() => KL.game.human.a);
 await p.waitForTimeout(2500);

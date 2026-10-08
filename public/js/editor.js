@@ -8,7 +8,8 @@ import Input from './input.js';
 import { THEMES, compileTrack, validateTrack, generateTrack, nearest, catmull, VERGE } from './tracks.js';
 import { clamp, TAU, hashStr } from './util.js';
 
-const ITEM_TYPES = [['repair', '#ff4d4d', '+'], ['ammo', '#ffd23a', 'A'], ['cash', '#4cff7a', '$'], ['nitro', '#3ab8ff', 'N'], ['boost', '#31e2ff', '»'], ['oil', '#666', 'O']];
+const ITEM_TYPES = [['repair', '#ff4d4d', '+'], ['ammo', '#ffd23a', 'A'], ['cash', '#4cff7a', '$'], ['nitro', '#3ab8ff', 'N'], ['boost', '#31e2ff', '»'], ['oil', '#666', 'O'], ['jump', '#c8a050', 'J'], ['ford', '#3a9bd5', '~'], ['train', '#ff8844', 'T'], ['cross', '#ffffff', 'X'], ['lava', '#ff4a10', 'L'], ['wave', '#2d8fb5', 'W'], ['bomber', '#c8d060', 'B']];
+const ITEM_HELP = { jump: 'Ramp: launches cars that hit it at speed.', ford: 'Water: slows cars and soaks the brakes.', train: 'Level crossing: a train runs across the road now and then. Place it ON the road.', cross: 'Pedestrian crossing: people walk across (and get hit).', lava: 'Lava vent: erupts on a timer. Place beside the road.', wave: 'Tidal wave: sweeps across the road. Place beside the road.', bomber: 'Air raid: a bomber drops bombs along the track (one marker is enough).' };
 const PROP_TYPES = { desert: ['cactus', 'rock', 'adobe', 'dune', 'tyres'], forest: ['pine', 'oak', 'rock', 'log', 'cabin'], snow: ['snowpine', 'rock', 'cabin', 'snowman'], city: ['tower', 'building', 'lamp', 'billboard', 'tyres'], industrial: ['container', 'tank', 'building', 'barrels', 'crane'], volcano: ['spire', 'rock', 'lava'], coast: ['palm', 'umbrella', 'rock', 'hut'], mesa: ['mesa', 'rock', 'cactus'] };
 const ALL_PROPS = [...new Set(Object.values(PROP_TYPES).flat())];
 
@@ -33,10 +34,12 @@ export const Editor = {
     };
     this.cv.addEventListener('mousedown', this._h.down); window.addEventListener('mousemove', this._h.move); window.addEventListener('mouseup', this._h.up);
     this.cv.addEventListener('wheel', this._h.wheel, { passive: false }); window.addEventListener('keydown', this._h.key); this.cv.addEventListener('contextmenu', this._h.ctx); window.addEventListener('resize', this._h.resize);
-    this.recompile(); this.say('Click the map to add road points. Drag points to move them. Right-click deletes.');
+    this._nav = k => { if (!this.active || !this.menuMode || UI.modals.length) return; if (k === 'back') this.setMenuMode(false); else if (k === 'ok') UI.activate(); else if (['up', 'down', 'left', 'right'].includes(k)) UI.dir(k); };
+    Input.navListeners.add(this._nav); this.menuMode = false; UI.editorScope = null;
+    this.recompile(); this.say('Click the map to add road points. Drag points to move them. Right-click deletes.  (Gamepad: View button toggles the menus)');
   },
   close() {
-    this.active = false; const root = document.getElementById('editor'); root.classList.add('hide'); root.innerHTML = '';
+    this.active = false; Input.navListeners.delete(this._nav); UI.editorScope = null; const root = document.getElementById('editor'); root.classList.remove('menumode'); root.classList.add('hide'); root.innerHTML = '';
     window.removeEventListener('mousemove', this._h.move); window.removeEventListener('mouseup', this._h.up); window.removeEventListener('keydown', this._h.key); window.removeEventListener('resize', this._h.resize);
   },
   say(t) { this.status.textContent = t; },
@@ -128,8 +131,14 @@ export const Editor = {
   setTool(t) { this.tool = t; this.sel = t === 'points' ? this.sel : -1; this.buildPanel(); this.buildBar(); this.say({ points: 'Points: click to add/insert, drag to move, right-click to delete, Shift+wheel or [ ] for width.', items: 'Items: click to place, right-click to remove.', props: 'Scenery: click to place (outside the barriers), right-click to remove.' }[t]); },
 
   /* gamepad cursor (call each frame) */
+  setMenuMode(on) {
+    this.menuMode = on; document.getElementById('editor').classList.toggle('menumode', on); UI.editorScope = on ? document.getElementById('editor') : null;
+    if (on) { UI.focusFirst(); this.say('MENU MODE - D-pad/stick: move, A: press, left/right: change values, B or View: back to the map'); } else { const f = document.querySelector('#editor .nv.focus'); if (f) f.classList.remove('focus'); this.say('MAP MODE - stick: cursor, A: place/grab, X: delete, Y: tool, View: menus'); }
+  },
   pad(dt) {
     const p = Input.getPad(); if (!p || UI.modals.length) { if (!p) this.cursor.vis = false; return; }
+    const vw = p.buttons[8] && p.buttons[8].pressed; if (vw && !this._vw) this.setMenuMode(!this.menuMode); this._vw = vw;
+    if (this.menuMode) return;
     const ax = Math.abs(p.axes[0]) > 0.15 ? p.axes[0] : 0, ay = Math.abs(p.axes[1]) > 0.15 ? p.axes[1] : 0;
     const bx = Math.abs(p.axes[2] || 0) > 0.15 ? p.axes[2] : 0, by = Math.abs(p.axes[3] || 0) > 0.15 ? p.axes[3] : 0;
     if (!this.cursor.vis) { this.cursor.x = this.cam.x; this.cursor.y = this.cam.y; }
@@ -143,7 +152,7 @@ export const Editor = {
     if (now.x && !prev.x) this.act(this.cursor.x, this.cursor.y, true);
     if (now.y && !prev.y) { const order = ['points', 'items', 'props']; this.setTool(order[(order.indexOf(this.tool) + 1) % 3]); }
     if (now.rb && !prev.rb) this.adjustWidth(10); if (now.lb && !prev.lb) this.adjustWidth(-10);
-    if (now.st && !prev.st) this.test(); if (now.b && !prev.b && !this.drag) this.exit();
+    if (now.st && !prev.st) this.test(); if (now.b && !prev.b && !this.drag && !this.menuMode) this.exit();
     this._pp = now;
   },
 
@@ -198,16 +207,20 @@ export const Editor = {
       slider('Road width', 100, 260, 10, t.width, v => { this.snapshot(); t.width = v; this.recompile(); }, v => v + ' px'),
       cycle('Laps', [1, 2, 3, 4, 5, 6, 8, 10].map(v => ({ v, t: String(v) })), t.laps || 3, v => { t.laps = v; this.dirty = true; }),
       slider('Scenery density', 0, 2, 0.1, t.dens == null ? THEMES[t.theme].dens : t.dens, v => { t.dens = v; this.dirty = true; }, v => v.toFixed(1) + 'x'),
-      toggle('Auto-placed pickups', t.auto !== false, v => { t.auto = v; this.dirty = true; }));
+      toggle('Auto-placed pickups', t.auto !== false, v => { t.auto = v; this.dirty = true; }),
+      toggle('Auto hazards (trains, wave...)', t.hazards !== false, v => { t.hazards = v; this.dirty = true; }));
     if (this.tool === 'points') {
-      if (this.sel >= 0 && t.pts[this.sel]) { const pt = t.pts[this.sel]; p.append(h('div', { class: 'panel' }, h('b', null, 'Point ' + (this.sel + 1)), slider('Width here', 90, 300, 10, pt[2] || t.width, v => { this.snapshot(); pt[2] = v; this.recompile(); }, v => v + ' px'), btn('Reset width', () => { this.snapshot(); pt.length = 2; this.recompile(); this.buildPanel(); }, 'mini ghost'))); }
+      if (this.sel >= 0 && t.pts[this.sel]) { const pt = t.pts[this.sel]; p.append(h('div', { class: 'panel' }, h('b', null, 'Point ' + (this.sel + 1)), slider('Width here', 90, 300, 10, pt[2] || t.width, v => { this.snapshot(); pt[2] = v; this.recompile(); }, v => v + ' px'),
+        slider('Road height', 0, 110, 10, pt[3] || 0, v => { this.snapshot(); pt[2] = pt[2] ?? null; pt[3] = v; this.recompile(); }, v => (v ? v + ' (raised)' : 'ground')),
+        toggle('Tunnel here', !!pt[4], v => { this.snapshot(); pt[2] = pt[2] ?? null; pt[3] = pt[3] || 0; pt[4] = v ? 1 : 0; this.recompile(); }),
+        btn('Reset point', () => { this.snapshot(); pt.length = 2; this.recompile(); this.buildPanel(); }, 'mini ghost'), h('div', { class: 'small' }, 'Raise 2+ neighbouring points to build a flyover. Where roads cross, one must be 50+ higher.'))); }
       p.append(btn('REVERSE DIRECTION', () => { this.snapshot(); t.pts.reverse(); this.recompile(); }, 'mini ghost'), btn('SCALE ×1.15', () => { this.snapshot(); const cx = this.cam.x, cy = this.cam.y; t.pts.forEach(q => { q[0] = Math.round(cx + (q[0] - cx) * 1.15); q[1] = Math.round(cy + (q[1] - cy) * 1.15); }); this.recompile(); }, 'mini ghost'), btn('SCALE ×0.87', () => { this.snapshot(); const cx = this.cam.x, cy = this.cam.y; t.pts.forEach(q => { q[0] = Math.round(cx + (q[0] - cx) * 0.87); q[1] = Math.round(cy + (q[1] - cy) * 0.87); }); this.recompile(); }, 'mini ghost'), btn('SUBDIVIDE (more points)', () => {
         const P = t.pts, n = P.length; if (n > 60) { UI.toast('Already plenty of points', 'bad'); return; } this.snapshot(); const out = [];
         for (let i = 0; i < n; i++) { const a = P[(i - 1 + n) % n], b = P[i], c = P[(i + 1) % n], d = P[(i + 2) % n]; out.push(b); out.push([Math.round(catmull(a[0], b[0], c[0], d[0], 0.5)), Math.round(catmull(a[1], b[1], c[1], d[1], 0.5))]); }
         t.pts = out; this.sel = -1; this.recompile(); this.buildPanel();
       }, 'mini ghost'));
     } else if (this.tool === 'items') {
-      p.append(h('div', { class: 'palette' }, ITEM_TYPES.map(([id, col, ch]) => h('button', { class: 'btn nv mini' + (this.itemType === id ? ' primary' : ''), onclick: () => { this.itemType = id; this.buildPanel(); } }, h('span', { style: `color:${col}` }, '● '), id))), h('div', { class: 'small' }, 'Boost pads face along the road direction. Oil slicks make cars slide.'));
+      p.append(h('div', { class: 'palette' }, ITEM_TYPES.map(([id, col, ch]) => h('button', { class: 'btn nv mini' + (this.itemType === id ? ' primary' : ''), onclick: () => { this.itemType = id; this.buildPanel(); } }, h('span', { style: `color:${col}` }, '● '), id))), h('div', { class: 'small' }, ITEM_HELP[this.itemType] || 'Boost pads face along the road direction. Oil slicks make cars slide.'));
     } else {
       const types = [...new Set([...PROP_TYPES[t.theme], ...ALL_PROPS])];
       p.append(h('div', { class: 'palette' }, types.map(id => h('button', { class: 'btn nv mini' + (this.propType === id ? ' primary' : ''), onclick: () => { this.propType = id; this.buildPanel(); } }, id))));
@@ -232,6 +245,7 @@ export const Editor = {
       const edge = (side, e) => { for (let i = 0; i <= N; i++) { const j = i % N, lat = side * (T.hw[j] + e); const px = T.x[j] - T.ty[j] * lat - ox, py = T.y[j] + T.tx[j] * lat - oy; if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); } g.closePath(); };
       g.beginPath(); edge(1, VERGE); edge(-1, VERGE); g.fillStyle = th.verge; g.fill('evenodd');
       g.beginPath(); edge(1, 0); edge(-1, 0); g.fillStyle = th.road; g.fill('evenodd');
+      if (T.hasElev || T.hasTun) { g.lineCap = 'round'; for (let i = 0; i < N; i++) { const j = (i + 1) % N; if (!T.elev[i] && !T.tn[i]) continue; g.strokeStyle = T.tn[i] ? 'rgba(122,84,52,0.75)' : `rgba(170,200,240,${0.35 + Math.min(0.4, T.z[i] / 200)})`; g.lineWidth = 2 * (T.hw[i] + 10); g.beginPath(); g.moveTo(T.x[i] - ox, T.y[i] - oy); g.lineTo(T.x[j] - ox, T.y[j] - oy); g.stroke(); } g.lineCap = 'butt'; }
       g.lineWidth = 9; g.strokeStyle = th.wallTop; for (const s of [-1, 1]) { g.beginPath(); for (let i = 0; i <= N; i++) { const j = i % N, lat = s * (T.hw[j] + VERGE + 5); const px = T.x[j] - T.ty[j] * lat - ox, py = T.y[j] + T.tx[j] * lat - oy; if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); } g.stroke(); }
       g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 3; g.setLineDash([22, 26]); g.beginPath(); for (let i = 0; i <= N; i++) { const j = i % N; if (i === 0) g.moveTo(T.x[j] - ox, T.y[j] - oy); else g.lineTo(T.x[j] - ox, T.y[j] - oy); } g.stroke(); g.setLineDash([]);
       // start line + direction arrows

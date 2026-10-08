@@ -1,6 +1,8 @@
 // Kill Lap race simulation + world rendering.
 import { clamp, angDiff, lerp, TAU, mulberry32, rgba, hashStr } from './util.js';
-import { compileTrack, nearest, pointAt, VERGE } from './tracks.js';
+import { compileTrack, nearest, pointAt, VERGE, ELEV_T } from './tracks.js';
+import { Hazards } from './hazards.js';
+import { makeVis, drawWalls, drawDecks, drawDeckShadows, drawTunnels } from './structures.js';
 import { carStats, CAR_BY_ID, WEAPONS, DIFFICULTIES, AI_NAMES } from './cars.js';
 import { Ground, gridPos, makeMinimap } from './ground.js';
 import { View, drawProp, drawProp2Glow, drawItem, drawCar, drawProjectile, drawMine, Particles } from './sprites.js';
@@ -8,7 +10,7 @@ import Audio from './audio.js';
 import Input from './input.js';
 
 const FIXED = 1 / 60;
-const PICKUP_R = 30, RESPAWN_ITEM = 14;
+const PICKUP_R = 30, RESPAWN_ITEM = 14, FIN_OFF = 22; // FIN_OFF: lap counts once the car centre clears the far edge of the checkered band
 
 export class Game {
   /**
@@ -30,12 +32,13 @@ export class Game {
     this.camTarget = null; this.cam = { x: this.T.start.x, y: this.T.start.y };
     this.night = this.T.th.night; this.hudFlash = 0; this.ghost = opts.ghost || null; this.ghostRec = []; this.ghostRecT = 0; this.bestGhost = null;
     this.sortedProps = this.T.props.slice().sort((a, b) => a.y - b.y);
+    this.hazards = (this.T.hazards.length || this.T.bomber) ? new Hazards(this) : null; this.warn = null;
     this.stats = { kills: 0, deaths: 0, cash: 0, topSpeed: 0, dmgDealt: 0, pickups: 0, cleanLaps: 0 };
     (opts.roster || []).forEach((r, i) => this.addCar(r, i));
     this.human = this.cars.find(c => c.human) || null; this.camTarget = this.human || this.cars[0];
     if (this.camTarget) { this.cam.x = this.camTarget.x; this.cam.y = this.camTarget.y; }
     this.view.x = this.cam.x; this.view.y = this.cam.y;
-    this.msg('GET READY', 1.2);
+    this.msg('GET READY', 1.2); if (this.weapons && this.mode !== 'attract') this.feedAdd('Weapons unlock after lap 1', '#ffb347');
   }
 
   /* ---------------------------------------------------------------- cars */
@@ -46,11 +49,12 @@ export class Game {
       id: spec.id, name: spec.name, human: !!spec.human, ai: !!spec.ai, remote: !!spec.remote, local: !spec.remote, stats: st, slot,
       color: spec.color || st.color, len: st.len, wid: st.wid, shape: st.shape, mass: st.mass,
       x: pos.x, y: pos.y, a: pos.a, vx: 0, vy: 0, w: 0, steerVis: 0, hp: st.hp, maxHp: st.hp,
-      ammo: { mg: st.mgAmmo, rocket: st.rocketAmmo, mine: st.mineAmmo }, nitro: st.nitroCharges - 1, nitroT: 0, nitroOn: false, cool: { mg: 0, rocket: 0, mine: 0 },
+      ammo: { mg: st.mgAmmo, rocket: st.rocketAmmo, mine: st.mineAmmo, homing: st.homingAmmo, cluster: st.clusterAmmo }, nitro: st.nitroCharges - 1, nitroT: 0, nitroOn: false, cool: { mg: 0, rocket: 0, mine: 0, special: 0 },
+      special: st.mods.homing ? 'homing' : st.mods.cluster ? 'cluster' : null, guard: st.guardCharges, turA: pos.a, turCool: 0.5, mods: st.mods, zRoad: 0, z: 0, zAir: 0,
       accF: near.f - T.N, prevF: near.f, pos: near.f, p: (near.f - T.N) / T.N, lap: 0, lapStart: 0, lapTimes: [], best: null, finished: false, finishTime: null, finishPlace: 0,
       kills: 0, deaths: 0, cash: 0, lat: 0, dead: false, respawnT: 0, invuln: 0, braking: false, boostT: 0, oilT: 0, wrongWay: 0, surface: 'road', lapDamage: 0, maxSpeed: 0,
       input: { steer: 0, throttle: 0, brake: 0, hb: false, fire: false, rocket: false, mine: false, nitro: false },
-      aiLane: (Math.random() - 0.5) * 0.8, aiLaneT: Math.random() * 3, aiSkill: 0.94 + Math.random() * 0.08, stuckT: 0, revT: 0, mgHeld: false,
+      aiLane: (Math.random() - 0.5) * 0.8, aiLaneT: Math.random() * 3, aiSkill: (spec.skill || 1) * (0.97 + Math.random() * 0.05), aggr: spec.aggr || 1, stuckT: 0, revT: 0, mgHeld: false,
       tx: pos.x, ty: pos.y, ta: pos.a, slip: 0, lastHitBy: null, voice: null, resetHold: 0, lastScrape: 0, ping: 0, netAge: 0,
     };
     c.state = 'grid';
@@ -83,17 +87,19 @@ export class Game {
       c.invuln = Math.max(0, c.invuln - dt);
       if (c.dead) { c.respawnT -= dt; if (c.respawnT <= 0) this.respawn(c); continue; }
       // inputs
-      if (c.human && !c.finished && !c.auto) { Object.assign(c.input, drive || {}); }
+      if (c.human && !c.finished && !c.auto) { Object.assign(c.input, drive || {}); if (drive && drive.cycleEdge) drive.cycleEdge = false; }
       else this.aiThink(c, dt, racing);
       if (!racing && this.state === 'countdown') { c.input.hb = c.human ? false : false; }
       this.drive(c, dt, racing);
       if (racing || this.state === 'over') this.track(c, dt);
       if (this.weapons && racing && !c.finished) this.weaponInput(c, dt);
-      c.cool.mg -= dt; c.cool.rocket -= dt; c.cool.mine -= dt;
+      c.cool.mg -= dt; c.cool.rocket -= dt; c.cool.mine -= dt; c.cool.special -= dt; c.guardFlash = Math.max(0, (c.guardFlash || 0) - dt);
+      if (this.weapons && racing && !c.finished) this.stepTurret(c, dt);
       this.pickups(c, dt);
       // manual respawn
       if (c.human && drive && drive.reset && racing) { c.resetHold += dt; if (c.resetHold > 0.8) { c.resetHold = 0; this.respawn(c, true); } } else c.resetHold = 0;
     }
+    if (this.hazards && racing) this.hazards.update(dt);
     this.collideAll(dt);
     if (this.weapons) { this.stepProjectiles(dt); this.stepMines(dt); }
     for (const it of this.items) if (!it.active && (it.respawn -= dt) <= 0) it.active = true;
@@ -109,13 +115,17 @@ export class Game {
   /* ---------------------------------------------------------------- physics */
   drive(c, dt, racing) {
     const st = c.stats, T = this.T, inp = c.input;
+    // airborne (jump ramps): simple ballistic height, no tyre grip or engine until we land
+    if ((c.zAir || 0) > 0 || (c.vz || 0) > 0) { c.vz = (c.vz || 0) - 560 * dt; c.zAir = (c.zAir || 0) + c.vz * dt; if (c.zAir <= 0) { const imp = -c.vz; c.zAir = 0; c.vz = 0; this.landed(c, imp); } }
+    const air = (c.zAir || 0) > 1; c.waterT = Math.max(0, (c.waterT || 0) - dt);
     const cs = Math.cos(c.a), sn = Math.sin(c.a);
     let vf = c.vx * cs + c.vy * sn;
     const vf0 = vf;
     const nr = nearest(T, c.x, c.y, c.pos);
-    c.pos = nr.f; c.lat = nr.lat; const alat = Math.abs(nr.lat), off = alat > nr.hw;
+    c.pos = nr.f; c.lat = nr.lat; c.zRoad = nr.z; c.z = nr.z + (c.zAir || 0); const alat = Math.abs(nr.lat), off = alat > nr.hw;
     c.surface = off ? 'grass' : 'road';
     let thr = racing || this.state === 'countdown' ? inp.throttle : 0, brk = racing ? inp.brake : (this.state === 'countdown' ? 0 : inp.brake);
+    if (air) { thr = 0; brk = 0; }
     if (this.state === 'countdown') { thr = 0; brk = 0; }
     if (c.finished && !c.human) { /* AI continues */ }
     // nitro
@@ -124,18 +134,19 @@ export class Game {
     if (!inp.nitro) c.nitroLatch = false;
     c.boostT = Math.max(0, c.boostT - dt); c.oilT = Math.max(0, c.oilT - dt);
     const nb = c.nitroOn ? 1 + 0.32 * st.nitroPower : 1, bb = c.boostT > 0 ? 1.22 : 1;
-    const topV = st.top * nb * bb * (off ? 0.62 : 1) * (c.hp < c.maxHp * 0.25 ? 0.93 : 1);
+    const boosting = c.nitroOn || c.boostT > 0;
+    const topV = st.top * nb * bb * (off ? (boosting ? 0.9 : 0.62) : 1) * (c.hp < c.maxHp * 0.25 ? 0.93 : 1);
     let force = 0;
     if (thr > 0) force += st.accel * thr * (c.nitroOn ? 1.9 * st.nitroPower : 1) * (c.boostT > 0 ? 2.2 : 1) * clamp(1.05 - vf / topV, -0.3, 1.1);
     if (brk > 0) { if (vf > 15) force -= st.brake * brk; else force -= st.accel * 0.5 * brk * clamp(1 + vf / 160, 0, 1); }
     c.braking = brk > 0 && vf > 10;
     if (thr === 0 && brk === 0) vf -= vf * 0.35 * dt;
-    vf -= vf * (off ? 1.6 : 0.12) * dt;
+    vf -= vf * (off ? (boosting ? 0.5 : 1.6) : 0.12) * dt;
     if (vf > topV) vf -= (vf - topV) * 1.5 * dt;
     vf += force * dt;
     // steering
     const spd = Math.abs(vf), sgn = vf >= -3 ? 1 : -1;
-    const maxW = st.steer * (3.35 - 1.7 * clamp(spd / st.top, 0, 1.2)) * (inp.hb ? 1.3 : 1);
+    const maxW = st.steer * (3.35 - 1.7 * clamp(spd / st.top, 0, 1.2)) * (inp.hb ? 1.3 : 1) * (air ? 0.25 : 1);
     const lowSpeed = clamp(spd / 70, 0, 1);
     const wT = -inp.steer * -1 * maxW * lowSpeed * sgn;
     c.w += (wT - c.w) * Math.min(1, 10 * dt);
@@ -146,7 +157,8 @@ export class Game {
     // the car slide when it is turned hard, overloaded by nitro, on grass, on oil, or on the handbrake).
     const cs2 = Math.cos(c.a), sn2 = Math.sin(c.a);
     let vf2 = c.vx * cs2 + c.vy * sn2 + (vf - vf0), vl = -c.vx * sn2 + c.vy * cs2;
-    const G = 1000 * st.grip * (inp.hb ? 0.3 : 1) * (off ? 0.7 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.92 : 1);
+    const G = 1000 * st.grip * (inp.hb ? 0.3 : 1) * (off ? 0.7 : 1) * (c.oilT > 0 ? 0.15 : 1) * (c.nitroOn ? 0.92 : 1) * (air ? 0 : 1) * (c.waterT > 0 ? 0.55 : 1);
+    if (c.waterT > 0 && !air) vf2 -= vf2 * 1.15 * dt;
     const dv = clamp(-vl * 9, -G, G) * dt;
     vl += Math.abs(dv) > Math.abs(vl) ? -vl : dv;
     if (inp.hb) vf2 -= vf2 * 0.3 * dt;
@@ -168,7 +180,7 @@ export class Game {
     if (hpf < 0.4 && Math.random() < (0.5 - hpf)) this.fx.smoke(c.x + cs2 * 8, c.y + sn2 * 8, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20 - 10, 8, 1, hpf < 0.2 ? '25,25,25' : '110,110,110', 0.55);
     if (hpf < 0.2 && Math.random() < 0.35) this.fx.fire(c.x + cs2 * 8, c.y + sn2 * 8, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30 - 20, 7, 0.3);
     // wall
-    const lim = nr.hw + VERGE - 2;
+    const lim = nr.hw + nr.wl - 2;
     if (alat > lim) {
       const side = nr.lat > 0 ? 1 : -1, nx = nr.nx * side, ny = nr.ny * side; // outward normal
       const push = alat - lim; c.x -= nx * push; c.y -= ny * push;
@@ -181,6 +193,12 @@ export class Game {
         if (vn > 60) this.hitWall(c, vn, c.x + nx * c.wid * 0.5, c.y + ny * c.wid * 0.5, nx, ny);
       }
     }
+  }
+  landed(c, imp) {
+    const dust = clamp(imp / 80, 2, 10) | 0; for (let i = 0; i < dust; i++) this.fx.smoke(c.x, c.y, (Math.random() - 0.5) * 160, (Math.random() - 0.5) * 160, 7, 0.7, '200,190,170', 0.5);
+    if (imp > 120) { this.snd('crash', c.x, c.y, clamp(imp / 350, 0.3, 0.9)); for (let i = 0; i < 6; i++) this.fx.spark(c.x, c.y, (Math.random() - 0.5) * 240, (Math.random() - 0.5) * 240, 0.3); }
+    if (imp > 260) this.damage(c, (imp - 260) * 0.05, null, 'landing');
+    if (c.human) { this.shake = Math.max(this.shake, clamp(imp / 60, 1, 6)); Input.rumble(clamp(imp / 400, 0.2, 0.8), 0.3, 120); }
   }
   hitWall(c, vn, x, y, nx, ny) {
     const now = this.time; const dmg = Math.max(0, (vn - 150)) * 0.045 / Math.sqrt(c.mass);
@@ -197,12 +215,13 @@ export class Game {
     const tv = c.vx * this.T.tx[c.pos | 0] + c.vy * this.T.ty[c.pos | 0];
     c.wrongWay = tv < -60 ? c.wrongWay + dt : Math.max(0, c.wrongWay - dt * 2);
     if (c.finished) return;
-    if (c.p >= c.lap + 1 && this.state === 'racing') {
+    if (c.accF >= (c.lap + 1) * N + FIN_OFF / this.T.step && this.state === 'racing') {
       c.lap++; const t = this.raceTime - c.lapStart; c.lapTimes.push(t); c.lapStart = this.raceTime;
       const isBest = c.best == null || t < c.best; if (isBest) c.best = t;
       if (c.human) {
         if (c.lapDamage === 0) this.stats.cleanLaps++; c.lapDamage = 0;
         Audio.sfx(isBest && c.lap > 1 ? 'bestlap' : 'lap'); this.msg(c.lap >= this.laps ? 'FINAL LAP DONE' : `LAP ${c.lap} / ${this.laps}`, 1.6, '#ffd23a');
+        if (c.lap === 1 && this.weapons) { this.feedAdd('WEAPONS ONLINE!', '#ff9a4a'); Audio.sfx('pickup'); }
         if (this.opts.onLap) this.opts.onLap(c, t, isBest);
         if (this.mode === 'tt' && isBest && this.ghostRec.length > 5) { this.bestGhost = { lap: t, pts: this.ghostRec }; }
         this.ghostRec = []; this.ghostRecT = 0;
@@ -295,6 +314,7 @@ export class Game {
     const L = this.cars;
     for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
       const a = L[i], b = L[j]; if (a.dead || b.dead) continue;
+      if (Math.abs((a.z || 0) - (b.z || 0)) > 28) continue; // different road levels
       if (a.remote && b.remote) continue;
       const dx = b.x - a.x, dy = b.y - a.y, r = (a.len + b.len) * 0.5 + 4; if (dx * dx + dy * dy > r * r) continue;
       const ac = Math.cos(a.a), as = Math.sin(a.a), bc = Math.cos(b.a), bs = Math.sin(b.a);
@@ -317,9 +337,14 @@ export class Game {
         if (bMove) { b.vx += (jn / mb) * nx; b.vy += (jn / mb) * ny; b.w += (Math.random() - 0.5) * 1.5; }
         const speed = -vn;
         if (speed > 50) {
-          const hit = Math.max(0, speed - 70) * 0.04;
-          if (aMove) this.damage(a, hit * (mb / ma) ** 0.6, b.id, 'ram');
-          if (bMove) this.damage(b, hit * (ma / mb) ** 0.6, a.id, 'ram');
+          const hit = Math.max(0, speed - 70) * 0.04, sf = Math.min(1, speed / 180);
+          // spikes: where on each car the contact happened decides which spikes bite
+          const sp = (k, o) => { const dx = best.x - k.x, dy = best.y - k.y, fr = (dx * Math.cos(k.a) + dy * Math.sin(k.a)) / (k.len / 2), m = k.mods || {}; let dealt = 0, taken = 1;
+            if (fr > 0.45 && m.fs) { dealt = 3.4 * m.fs * sf; } else if (fr < -0.45 && m.rs) { dealt = 3.2 * m.rs * sf; } else if (Math.abs(fr) <= 0.45 && m.ws) { dealt = 2.8 * m.ws * sf; }
+            if (fr > 0.45 && m.fs) taken = 1 - 0.12 * m.fs; if (dealt > 0) for (let q = 0; q < 4; q++) this.fx.spark(best.x, best.y, (Math.random() - 0.5) * 300, (Math.random() - 0.5) * 300, 0.3, '255,240,200'); return { dealt, taken }; };
+          const A = sp(a, b), B = sp(b, a);
+          if (aMove) this.damage(a, hit * (mb / ma) ** 0.6 * A.taken + B.dealt, b.id, 'ram');
+          if (bMove) this.damage(b, hit * (ma / mb) ** 0.6 * B.taken + A.dealt, a.id, 'ram');
           if (this.time - (a.lastBump || 0) > 0.15) {
             a.lastBump = this.time; for (let k = 0; k < 6; k++) this.fx.spark(best.x, best.y, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, 0.3);
             this.snd('crash', best.x, best.y, clamp(speed / 250, 0.3, 1));
@@ -334,7 +359,7 @@ export class Game {
   pickups(c, dt) {
     if (c.finished && !c.human) return;
     for (const it of this.items) {
-      const dx = it.x - c.x, dy = it.y - c.y;
+      const dx = it.x - c.x, dy = it.y - c.y; if (Math.abs((it.z || 0) - (c.z || 0)) > 30) continue;
       if (it.t === 'boost') { if (dx * dx + dy * dy < 34 * 34 && c.boostT < 0.3) { c.boostT = 0.9; this.snd('boost', it.x, it.y, 0.8); if (c.human) this.hudFlash = 0.2; } continue; }
       if (it.t === 'oil') { if (dx * dx + dy * dy < 34 * 34 && c.oilT < 0.2 && c.nitroT <= 0) { c.oilT = 1.3; c.w += (Math.random() - 0.5) * 4; this.snd('oil', it.x, it.y, 0.6); } continue; }
       if (!it.active || dx * dx + dy * dy > PICKUP_R * PICKUP_R) continue;
@@ -347,7 +372,7 @@ export class Game {
     it.active = false; it.respawn = RESPAWN_ITEM;
     const st = c.stats;
     if (it.t === 'repair') c.hp = Math.min(c.maxHp, c.hp + c.maxHp * 0.4);
-    else if (it.t === 'ammo') { c.ammo.mg = Math.min(st.mgAmmo, c.ammo.mg + 50); c.ammo.rocket = Math.min(st.rocketAmmo, c.ammo.rocket + 2); c.ammo.mine = Math.min(st.mineAmmo, c.ammo.mine + 1); }
+    else if (it.t === 'ammo') { c.ammo.mg = Math.min(st.mgAmmo, c.ammo.mg + 50); c.ammo.rocket = Math.min(st.rocketAmmo, c.ammo.rocket + 2); c.ammo.mine = Math.min(st.mineAmmo, c.ammo.mine + 1); if (st.homingAmmo) c.ammo.homing = Math.min(st.homingAmmo, c.ammo.homing + 1); if (st.clusterAmmo) c.ammo.cluster = Math.min(st.clusterAmmo, c.ammo.cluster + 1); if (st.guardCharges) c.guard = Math.min(st.guardCharges, c.guard + 1); }
     else if (it.t === 'cash') { const v = 100 + Math.floor(Math.random() * 4) * 50; c.cash += v; if (c.human) { this.stats.cash += v; this.feedAdd('+$' + v, '#7dff3a'); } }
     else if (it.t === 'nitro') c.nitro = Math.min(st.nitroCharges + 2, c.nitro + 1);
     if (c.human) { this.stats.pickups++; this.snd(it.t === 'cash' ? 'cash' : 'pickup', it.x, it.y, 0.9); }
@@ -358,62 +383,109 @@ export class Game {
 
   /* ---------------------------------------------------------------- weapons */
   weaponInput(c, dt) {
-    const inp = c.input; if (c.dead) return;
+    const inp = c.input; if (c.dead || c.lap < 1) return;
     if (inp.fire && c.cool.mg <= 0) { if (c.ammo.mg > 0) this.fire(c, 'mg'); else if (c.human && c.cool.mg < -0.2) { Audio.sfx('empty'); c.cool.mg = 0.3; } }
     if (inp.rocket && c.cool.rocket <= 0) { if (c.ammo.rocket > 0) this.fire(c, 'rocket'); else if (c.human) { Audio.sfx('empty'); c.cool.rocket = 0.5; } }
     if (inp.mine && c.cool.mine <= 0) { if (c.ammo.mine > 0) this.fire(c, 'mine'); else if (c.human) { Audio.sfx('empty'); c.cool.mine = 0.5; } }
+    if (inp.cycleEdge) { inp.cycleEdge = false; this.cycleSpecial(c); }
+    if (inp.special && c.special && c.cool.special <= 0) { if (c.ammo[c.special] > 0) this.fire(c, c.special); else if (c.human) { Audio.sfx('empty'); c.cool.special = 0.5; } }
+  }
+  cycleSpecial(c) {
+    const owned = ['homing', 'cluster'].filter(k => c.stats.mods[k] > 0); if (owned.length < 2) return;
+    c.special = owned[(owned.indexOf(c.special) + 1) % owned.length]; if (c.human) { Audio.sfx('select', { vol: 0.5 }); this.msg(WEAPONS[c.special].name.toUpperCase(), 0.9, '#9fe3ff'); }
+  }
+  /** nearest rival in front of a car (for homing lock-on) */
+  lockTarget(c, range, cone) {
+    let target = null, bd = 1e9;
+    for (const o of this.cars) { if (o === c || o.dead || o.finished || Math.abs((o.z || 0) - (c.z || 0)) > 30) continue; const dx = o.x - c.x, dy = o.y - c.y, d = Math.hypot(dx, dy); if (d > range || d < 40) continue; const ang = Math.abs(angDiff(c.a, Math.atan2(dy, dx))); if (ang < cone && d + ang * 300 < bd) { bd = d + ang * 300; target = o; } }
+    return target;
   }
   fire(c, type) {
-    const W = WEAPONS[type], cs = Math.cos(c.a), sn = Math.sin(c.a);
+    const W = WEAPONS[type], cs = Math.cos(c.a), sn = Math.sin(c.a), z = (c.z || 0) + 9;
+    const send = (w, p) => { if (this.net) this.net.send({ t: 'ev', e: { k: 'fire', w, p: this.packProj(p) } }); };
     if (type === 'mg') {
       c.cool.mg = W.cool; c.ammo.mg--; c.mgSide = -(c.mgSide || 1);
       const a = c.a + (Math.random() - 0.5) * 0.05, ox = c.x + cs * c.len * 0.5 - sn * 5 * c.mgSide, oy = c.y + sn * c.len * 0.5 + cs * 5 * c.mgSide;
-      const p = { id: c.id + ':' + this.nextId++, owner: c.id, type: 'mg', x: ox, y: oy, vx: Math.cos(a) * W.speed + c.vx * 0.5, vy: Math.sin(a) * W.speed + c.vy * 0.5, life: W.life, dmg: W.dmg * c.stats.mgDmg, idx: c.pos };
-      this.proj.push(p); this.snd('gun', ox, oy, 0.55, 0.9 + Math.random() * 0.2); this.fx.spark(ox, oy, cs * 200, sn * 200, 0.12, '255,230,120');
-      if (this.net) this.net.send({ t: 'ev', e: { k: 'fire', w: 'mg', p: this.packProj(p) } });
+      const p = { id: c.id + ':' + this.nextId++, owner: c.id, type: 'mg', x: ox, y: oy, vx: Math.cos(a) * W.speed + c.vx * 0.5, vy: Math.sin(a) * W.speed + c.vy * 0.5, life: W.life, dmg: W.dmg * c.stats.mgDmg, idx: c.pos, z };
+      this.proj.push(p); this.snd('gun', ox, oy, 0.55, 0.9 + Math.random() * 0.2); this.fx.spark(ox, oy, cs * 200, sn * 200, 0.12, '255,230,120'); send('mg', p);
     } else if (type === 'rocket') {
       c.cool.rocket = W.cool; c.ammo.rocket--;
-      let target = null, bd = 1e9;
-      for (const o of this.cars) { if (o === c || o.dead || o.finished) continue; const dx = o.x - c.x, dy = o.y - c.y, d = Math.hypot(dx, dy); if (d > W.range || d < 40) continue; const ang = Math.abs(angDiff(c.a, Math.atan2(dy, dx))); if (ang < 0.55 && d + ang * 300 < bd) { bd = d + ang * 300; target = o; } }
-      const ox = c.x + cs * c.len * 0.55, oy = c.y + sn * c.len * 0.55, sp0 = 380;
-      const p = { id: c.id + ':' + this.nextId++, owner: c.id, type: 'rocket', x: ox, y: oy, vx: cs * sp0 + c.vx * 0.6, vy: sn * sp0 + c.vy * 0.6, life: W.life, dmg: W.dmg * c.stats.rocketDmg, tgt: target ? target.id : null, age: 0, idx: c.pos };
-      this.proj.push(p); this.snd('rocket', ox, oy, 0.9); if (c.human) Input.rumble(0.3, 0.6, 120);
-      if (this.net) this.net.send({ t: 'ev', e: { k: 'fire', w: 'rocket', p: this.packProj(p) } });
+      const ox = c.x + cs * c.len * 0.55, oy = c.y + sn * c.len * 0.55, sp0 = 420;
+      const p = { id: c.id + ':' + this.nextId++, owner: c.id, type: 'rocket', x: ox, y: oy, vx: cs * sp0 + c.vx * 0.5, vy: sn * sp0 + c.vy * 0.5, life: W.life, dmg: W.dmg * c.stats.rocketDmg, tgt: null, age: 0, idx: c.pos, z };
+      this.proj.push(p); this.snd('rocket', ox, oy, 0.9); if (c.human) Input.rumble(0.3, 0.6, 120); send('rocket', p);
+    } else if (type === 'homing') {
+      c.cool.special = W.cool; c.ammo.homing--; const target = this.lockTarget(c, W.range, 0.6);
+      const side = (c.homSide = -(c.homSide || 1)), ox = c.x + cs * c.len * 0.3 - sn * 9 * side, oy = c.y + sn * c.len * 0.3 + cs * 9 * side;
+      const p = { id: c.id + ':' + this.nextId++, owner: c.id, type: 'homing', x: ox, y: oy, vx: cs * 380 + c.vx * 0.5, vy: sn * 380 + c.vy * 0.5, life: W.life, dmg: W.dmg * c.stats.homingDmg, tgt: target ? target.id : null, age: 0, idx: c.pos, z };
+      this.proj.push(p); this.snd('rocket', ox, oy, 0.8, 1.2); send('homing', p);
+      if (c.human && !target) this.msg('NO LOCK', 0.6, '#ffb347');
+    } else if (type === 'cluster') {
+      c.cool.special = W.cool; c.ammo.cluster--;
+      const ox = c.x + cs * c.len * 0.4, oy = c.y + sn * c.len * 0.4;
+      const p = { id: c.id + ':' + this.nextId++, owner: c.id, type: 'cluster', x: ox, y: oy, vx: cs * W.speed + c.vx * 0.5, vy: sn * W.speed + c.vy * 0.5, life: W.life, dmg: 0, age: 0, idx: c.pos, z, z0: z };
+      this.proj.push(p); this.snd('mine', ox, oy, 0.9); send('cluster', p);
     } else if (type === 'mine') {
       c.cool.mine = W.cool; c.ammo.mine--;
-      const m = { id: c.id + ':' + this.nextId++, owner: c.id, x: c.x - cs * (c.len * 0.65), y: c.y - sn * (c.len * 0.65), arm: W.arm, life: W.life, dmg: W.dmg * (1 + (c.stats.rocketDmg - 1) * 0.5) };
+      const m = { id: c.id + ':' + this.nextId++, owner: c.id, z: c.z || 0, x: c.x - cs * (c.len * 0.65), y: c.y - sn * (c.len * 0.65), arm: W.arm, life: W.life, dmg: W.dmg * (1 + (c.stats.rocketDmg - 1) * 0.5) };
       this.mines.push(m); this.snd('mine', m.x, m.y, 0.8);
-      if (this.net) this.net.send({ t: 'ev', e: { k: 'mine', m: { id: m.id, o: m.owner, x: Math.round(m.x), y: Math.round(m.y), d: m.dmg } } });
+      if (this.net) this.net.send({ t: 'ev', e: { k: 'mine', m: { id: m.id, o: m.owner, x: Math.round(m.x), y: Math.round(m.y), d: m.dmg, z: Math.round(m.z || 0) } } });
     }
   }
-  packProj(p) { return { id: p.id, o: p.owner, t: p.type, x: +p.x.toFixed(1), y: +p.y.toFixed(1), vx: +p.vx.toFixed(1), vy: +p.vy.toFixed(1), l: p.life, d: +p.dmg.toFixed(2), g: p.tgt || null }; }
+  packProj(p) { return { id: p.id, o: p.owner, t: p.type, x: +p.x.toFixed(1), y: +p.y.toFixed(1), vx: +p.vx.toFixed(1), vy: +p.vy.toFixed(1), l: p.life, d: +p.dmg.toFixed(2), g: p.tgt || null, z: Math.round(p.z || 0), u: p.turret ? 1 : 0 }; }
+  /** roof turret: tracks and shoots the nearest rival automatically */
+  stepTurret(c, dt) {
+    const lv = c.stats.mods.turret; if (!lv || c.dead || c.lap < 1) { return; }
+    c.turCool -= dt; let target = null, bd = WEAPONS.turret.range;
+    for (const o of this.cars) { if (o === c || o.dead || o.finished || Math.abs((o.z || 0) - (c.z || 0)) > 30) continue; const d = Math.hypot(o.x - c.x, o.y - c.y); if (d < bd) { bd = d; target = o; } }
+    const want = target ? Math.atan2(target.y - c.y + target.vy * 0.12, target.x - c.x + target.vx * 0.12) : c.a;
+    c.turA += clamp(angDiff(c.turA, want), -7 * dt, 7 * dt);
+    if (target && c.turCool <= 0 && Math.abs(angDiff(c.turA, want)) < 0.2) {
+      c.turCool = c.stats.turretCool; const a = c.turA + (Math.random() - 0.5) * 0.06, ox = c.x + Math.cos(a) * 16, oy = c.y + Math.sin(a) * 16;
+      const p = { id: c.id + ':' + this.nextId++, owner: c.id, type: 'mg', turret: true, x: ox, y: oy, vx: Math.cos(a) * 900 + c.vx * 0.5, vy: Math.sin(a) * 900 + c.vy * 0.5, life: 0.5, dmg: WEAPONS.turret.dmg * c.stats.turretDmg, idx: c.pos, z: (c.z || 0) + 22 };
+      this.proj.push(p); this.snd('gun', ox, oy, 0.3, 1.25);
+      if (this.net) this.net.send({ t: 'ev', e: { k: 'fire', w: 'mg', p: this.packProj(p) } });
+    }
+  }
   stepProjectiles(dt) {
     const T = this.T;
     for (let i = this.proj.length - 1; i >= 0; i--) {
-      const p = this.proj[i]; let dead = false, hit = null;
-      p.life -= dt;
-      if (p.type === 'rocket') {
-        p.age = (p.age || 0) + dt;
-        const tgt = p.tgt && this.byId[p.tgt];
-        let spd = Math.hypot(p.vx, p.vy), want = Math.min(WEAPONS.rocket.speed, 380 + p.age * 650);
-        let ang = Math.atan2(p.vy, p.vx);
-        if (tgt && !tgt.dead && p.age > 0.12) { const da = angDiff(ang, Math.atan2(tgt.y - p.y, tgt.x - p.x)); ang += clamp(da, -WEAPONS.rocket.turn * dt, WEAPONS.rocket.turn * dt); }
+      const p = this.proj[i]; let dead = false, hit = null, shielded = null;
+      p.life -= dt; p.age = (p.age || 0) + dt;
+      if (p.type === 'rocket') { // unguided: accelerates straight ahead
+        const sp = Math.hypot(p.vx, p.vy) || 1, want = Math.min(WEAPONS.rocket.speed, 420 + p.age * 1200);
+        p.vx *= want / sp; p.vy *= want / sp;
+        if (Math.random() < 0.9) { const a = Math.atan2(p.vy, p.vx); this.fx.smoke(p.x, p.y, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, 5, 0.6, '200,200,200', 0.4); this.fx.fire(p.x - Math.cos(a) * 6, p.y - Math.sin(a) * 6, -Math.cos(a) * 60, -Math.sin(a) * 60, 6, 0.2); }
+      } else if (p.type === 'homing') {
+        const W = WEAPONS.homing, tgt = p.tgt && this.byId[p.tgt]; let ang = Math.atan2(p.vy, p.vx); const want = Math.min(W.speed, 380 + p.age * 520);
+        if (tgt && !tgt.dead && p.age > 0.15) { const da = angDiff(ang, Math.atan2(tgt.y - p.y, tgt.x - p.x)); ang += clamp(da, -W.turn * dt, W.turn * dt); }
         p.vx = Math.cos(ang) * want; p.vy = Math.sin(ang) * want;
-        if (Math.random() < 0.9) { this.fx.smoke(p.x, p.y, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, 5, 0.6, '200,200,200', 0.4); this.fx.fire(p.x - Math.cos(ang) * 6, p.y - Math.sin(ang) * 6, -Math.cos(ang) * 60, -Math.sin(ang) * 60, 6, 0.2); }
-      }
+        this.fx.smoke(p.x, p.y, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, 4.5, 0.55, '190,225,255', 0.4); if (Math.random() < 0.7) this.fx.fire(p.x - Math.cos(ang) * 6, p.y - Math.sin(ang) * 6, -Math.cos(ang) * 60, -Math.sin(ang) * 60, 5, 0.18);
+      } else if (p.type === 'cluster') {
+        p.z = (p.z0 || 9) + Math.sin(Math.min(1, p.age / WEAPONS.cluster.life) * Math.PI) * 26; if (Math.random() < 0.5) this.fx.smoke(p.x, p.y, 0, 0, 4, 0.4, '170,170,150', 0.35);
+      } else if (p.type === 'bomblet') { p.vx *= Math.pow(0.05, dt); p.vy *= Math.pow(0.05, dt); }
       // sub-step to avoid tunnelling
       const steps = Math.ceil(Math.hypot(p.vx, p.vy) * dt / 14) || 1;
       for (let s = 0; s < steps && !dead; s++) {
         p.x += p.vx * dt / steps; p.y += p.vy * dt / steps;
+        if (p.type === 'bomblet') continue;
         for (const c of this.cars) {
-          if (c.id === p.owner || c.dead || c.finished && false) continue;
+          if (c.id === p.owner || c.dead || Math.abs((p.z || 0) - 9 - (c.z || 0)) > 30) continue;
           const dx = p.x - c.x, dy = p.y - c.y, r = c.len * 0.55;
-          if (dx * dx + dy * dy < r * r) { // refine with oriented box
+          if (dx * dx + dy * dy < r * r) {
             const cs = Math.cos(c.a), sn = Math.sin(c.a), lx = dx * cs + dy * sn, ly = -dx * sn + dy * cs;
             if (Math.abs(lx) < c.len * 0.52 && Math.abs(ly) < c.wid * 0.6) { hit = c; dead = true; break; }
           }
         }
-        if (!dead) { const nr = nearest(T, p.x, p.y, p.idx, 8); p.idx = nr.f; if (Math.abs(nr.lat) > nr.hw + VERGE) { dead = true; p.wall = true; } }
+        if (!dead) { const nr = nearest(T, p.x, p.y, p.idx, 8); p.idx = nr.f; if (Math.abs(nr.lat) > nr.hw + nr.wl && Math.abs(nr.z - ((p.z || 9) - 9)) < 30) { dead = true; p.wall = true; } }
+      }
+      // rear guard: shoots down incoming missiles that approach from behind
+      if (!dead && (p.type === 'rocket' || p.type === 'homing' || p.type === 'cluster')) {
+        for (const c of this.cars) {
+          if (!c.local || c.dead || c.id === p.owner || !(c.guard > 0) || Math.abs((p.z || 0) - 9 - (c.z || 0)) > 30) continue;
+          const dx = p.x - c.x, dy = p.y - c.y, d2 = dx * dx + dy * dy; if (d2 > 130 * 130) continue;
+          if (dx * Math.cos(c.a) + dy * Math.sin(c.a) < -4) { shielded = c; break; }
+        }
+        if (shielded) { shielded.guard--; shielded.guardFlash = 0.35; this.fx.explosion(p.x, p.y, 0.35); this.fx.ring(p.x, p.y, 40, 0.3, '120,220,255'); this.snd('hit', p.x, p.y, 0.8, 0.7); this.proj.splice(i, 1); if (shielded.human) this.msg('MISSILE INTERCEPTED', 1.2, '#9fe3ff'); if (this.net) this.net.send({ t: 'ev', e: { k: 'shield', id: p.id } }); continue; }
       }
       if (p.life <= 0) dead = true;
       if (dead) {
@@ -421,27 +493,32 @@ export class Game {
         if (p.type === 'mg') {
           if (hit) { this.fx.spark(p.x, p.y, (Math.random() - 0.5) * 200, (Math.random() - 0.5) * 200, 0.25); if (hit.local) this.damage(hit, p.dmg, p.owner, 'mg'); const ow = this.byId[p.owner]; if (ow && ow.human) { this.stats.dmgDealt += p.dmg; if (Math.random() < 0.5) this.snd('hit', p.x, p.y, 0.4); } }
           else if (p.wall) for (let k = 0; k < 3; k++) this.fx.spark(p.x, p.y, (Math.random() - 0.5) * 160, (Math.random() - 0.5) * 160, 0.2);
-        } else if (p.type === 'rocket') {
-          this.explode(p.x, p.y, p.owner, p.dmg, hit);
-        }
+        } else if (p.type === 'rocket' || p.type === 'homing') this.explode(p.x, p.y, p.owner, p.dmg, hit, WEAPONS[p.type], p.z);
+        else if (p.type === 'cluster') this.burstCluster(p);
+        else if (p.type === 'bomblet') this.explode(p.x, p.y, p.owner, 0, null, WEAPONS.bomblet, p.z, 0.45);
       }
     }
   }
-  explode(x, y, owner, directDmg, hit) {
-    const R = WEAPONS.rocket.splash; this.fx.explosion(x, y, 0.8); this.snd('smallboom', x, y, 1); this.ground.blot(x, y, 26, '#000000', 0.2);
-    this.shake = Math.max(this.shake, clamp(9 - Math.hypot(x - this.cam.x, y - this.cam.y) / 100, 0, 8));
+  burstCluster(p) {
+    this.fx.ring(p.x, p.y, 36, 0.3, '255,230,150'); this.snd('smallboom', p.x, p.y, 0.7, 1.3);
+    const seed = mulberry32(hashStr(p.id)); // deterministic so every client spawns identical bomblets
+    for (let k = 0; k < WEAPONS.cluster.bomblets; k++) { const a = seed() * TAU, sp = 90 + seed() * 230; this.proj.push({ id: p.id + 'b' + k, owner: p.owner, type: 'bomblet', x: p.x, y: p.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.35 + seed() * 0.6, dmg: 0, z: (p.z0 || 9) , age: 0, idx: p.idx }); }
+  }
+  explode(x, y, owner, directDmg, hit, W = WEAPONS.rocket, z = 9, size = 0.8) {
+    const R = W.splash; this.fx.explosion(x, y, size); this.snd('smallboom', x, y, 1); this.ground.blot(x, y, 26, '#000000', 0.2);
+    this.shake = Math.max(this.shake, clamp(9 - Math.hypot(x - this.cam.x, y - this.cam.y) / 100, 0, 8) * (size < 0.6 ? 0.4 : 1));
     for (const c of this.cars) {
-      if (c.dead || !c.local) continue; const d = Math.hypot(c.x - x, c.y - y);
-      if (c === hit) { this.damage(c, directDmg, owner, 'rocket'); const k = 220; c.vx += ((c.x - x) / (d || 1)) * k * 0.3; c.vy += ((c.y - y) / (d || 1)) * k * 0.3; }
-      else if (d < R + c.len * 0.4) { this.damage(c, WEAPONS.rocket.splashDmg * (owner === c.id ? 0.5 : 1) * (1 - d / (R + c.len * 0.4)) * 1.1, owner, 'rocket'); c.vx += ((c.x - x) / (d || 1)) * 200; c.vy += ((c.y - y) / (d || 1)) * 200; c.w += (Math.random() - 0.5) * 6; }
+      if (c.dead || !c.local || Math.abs((z || 9) - 9 - (c.z || 0)) > 40) continue; const d = Math.hypot(c.x - x, c.y - y);
+      if (c === hit && directDmg > 0) { this.damage(c, directDmg, owner, 'rocket'); const k = 220; c.vx += ((c.x - x) / (d || 1)) * k * 0.3; c.vy += ((c.y - y) / (d || 1)) * k * 0.3; }
+      else if (d < R + c.len * 0.4) { this.damage(c, W.splashDmg * (owner === c.id ? 0.5 : 1) * (1 - d / (R + c.len * 0.4)) * 1.1, owner, 'rocket'); c.vx += ((c.x - x) / (d || 1)) * 200; c.vy += ((c.y - y) / (d || 1)) * 200; c.w += (Math.random() - 0.5) * 6; }
     }
-    const ow = this.byId[owner]; if (ow && ow.human && hit) { this.stats.dmgDealt += directDmg; }
+    const ow = this.byId[owner]; if (ow && ow.human && hit && directDmg > 0) { this.stats.dmgDealt += directDmg; }
   }
   stepMines(dt) {
     for (let i = this.mines.length - 1; i >= 0; i--) {
       const m = this.mines[i]; m.life -= dt; m.arm -= dt; let trig = null;
       if (m.arm <= 0) for (const c of this.cars) {
-        if (c.dead || c.remote && false) continue; if (c.id === m.owner && m.arm > -1.5) continue;
+        if (c.dead || Math.abs((m.z || 0) - (c.z || 0)) > 25) continue; if (c.id === m.owner && m.arm > -1.5) continue;
         const dx = c.x - m.x, dy = c.y - m.y, r = WEAPONS.mine.r + c.wid * 0.3; if (dx * dx + dy * dy < r * r) { trig = c; break; }
       }
       if (trig || m.life <= 0) {
@@ -484,21 +561,26 @@ export class Game {
     let kmax = 0; const look = 8 + (sp / 12) | 0; for (let k = 0; k < look; k++) { const kk = Math.abs(T.curv[(((f | 0) + k) % N)]); if (kk > kmax) kmax = kk; }
     const mul = st.steer * 0.85; let vmax = 2.75 * mul / (kmax + 1.4 * mul / st.top); vmax = Math.min(vmax, st.top * skill * (c.nitroOn ? 1.3 : 1));
     if (Math.abs(c.lat) > T.hw[(f | 0) % N]) vmax *= 0.75;
+    if (this.hazards && this.hazards.slowFor(c)) vmax = Math.min(vmax, 230);
     inp.throttle = sp < vmax ? 1 : 0; inp.brake = sp > vmax * 1.1 ? clamp((sp - vmax) / 90, 0.2, 1) : 0;
+    c.holding = false; if (this.hazards && this.hazards.holdFor(c)) { inp.throttle = 0; inp.brake = 1; c.holding = true; }
     inp.hb = Math.abs(err) > 1.0 && sp > 160;
     // stuck / reverse
     if (c.revT > 0) { c.revT -= dt; inp.throttle = 0; inp.brake = 1; inp.steer = -inp.steer || 0.7; inp.hb = false; }
-    else { if (sp < 28 && racing) c.stuckT += dt; else c.stuckT = Math.max(0, c.stuckT - dt * 2); if (c.stuckT > 1.2) { c.stuckT = 0; c.revT = 0.9; } }
-    // weapons & nitro
-    inp.fire = inp.rocket = inp.mine = false;
-    if (this.weapons && this.raceTime > 4) {
-      const cs = Math.cos(c.a), sn = Math.sin(c.a); const aim = diff.aim;
+    else { if (sp < 28 && racing && !c.holding) c.stuckT += dt; else c.stuckT = Math.max(0, c.stuckT - dt * 2); if (c.stuckT > 1.2) { c.stuckT = 0; c.revT = 0.9; } }
+    // weapons & nitro (personality scales how trigger-happy each driver is)
+    inp.fire = inp.rocket = inp.mine = inp.special = false;
+    if (this.weapons && c.lap >= 1) {
+      const cs = Math.cos(c.a), sn = Math.sin(c.a); const aim = diff.aim, ag = (c.aggr || 1);
       for (const o of this.cars) {
-        if (o === c || o.dead || o.finished) continue; const dx = o.x - c.x, dy = o.y - c.y, lx = dx * cs + dy * sn, ly = -dx * sn + dy * cs;
-        if (lx > 30 && lx < 520 && Math.abs(ly) < 34 + (1 - aim) * 20 && c.ammo.mg > 0 && Math.random() < 0.3 + 0.5 * diff.aggression) inp.fire = true;
-        if (lx > 120 && lx < 700 && Math.abs(ly) < 90 && c.ammo.rocket > 0 && Math.random() < 0.02 * diff.aggression * (aim + 0.3)) inp.rocket = true;
-        if (lx < -50 && lx > -240 && Math.abs(ly) < 40 && c.ammo.mine > 0 && sp > 200 && (c.aiMineT || 0) <= 0 && Math.random() < 0.02 * diff.aggression) { inp.mine = true; c.aiMineT = 5 + Math.random() * 4; }
+        if (o === c || o.dead || o.finished || Math.abs((o.z || 0) - (c.z || 0)) > 30) continue; const dx = o.x - c.x, dy = o.y - c.y, lx = dx * cs + dy * sn, ly = -dx * sn + dy * cs;
+        if (lx > 30 && lx < 520 && Math.abs(ly) < 34 + (1 - aim) * 20 && c.ammo.mg > 0 && Math.random() < (0.3 + 0.5 * diff.aggression) * Math.min(1.3, ag)) inp.fire = true;
+        if (lx > 150 && lx < 650 && Math.abs(ly) < 30 && c.ammo.rocket > 0 && Math.random() < 0.03 * diff.aggression * ag * (aim + 0.3)) inp.rocket = true;
+        if (c.special === 'homing' && c.ammo.homing > 0 && lx > 100 && lx < 700 && Math.abs(ly) < 160 && Math.random() < 0.02 * diff.aggression * ag) inp.special = true;
+        if (c.special === 'cluster' && c.ammo.cluster > 0 && lx > 140 && lx < 380 && Math.abs(ly) < 90 && Math.random() < 0.025 * diff.aggression * ag) inp.special = true;
+        if (lx < -50 && lx > -240 && Math.abs(ly) < 40 && c.ammo.mine > 0 && sp > 200 && (c.aiMineT || 0) <= 0 && Math.random() < 0.02 * diff.aggression * ag) { inp.mine = true; c.aiMineT = 5 + Math.random() * 4; }
       }
+      if (c.special && !(c.ammo[c.special] > 0)) { const other = c.special === 'homing' ? 'cluster' : 'homing'; if (c.ammo[other] > 0) c.special = other; }
     }
     let straight = true; for (let k = 0; k < 40; k += 4) if (Math.abs(T.curv[(((f | 0) + k) % N)]) > 0.0009) { straight = false; break; }
     inp.nitro = straight && c.nitro > 0 && c.nitroT <= 0 && sp > 250 && Math.random() < 0.01 * (0.4 + diff.aggression);
@@ -507,7 +589,7 @@ export class Game {
   /* ---------------------------------------------------------------- networking */
   sendState() {
     const out = [];
-    for (const c of this.cars) if (c.local) out.push({ i: c.id, x: +c.x.toFixed(1), y: +c.y.toFixed(1), a: +c.a.toFixed(3), vx: +c.vx.toFixed(1), vy: +c.vy.toFixed(1), hp: Math.round(c.hp), mh: Math.round(c.maxHp), p: +c.p.toFixed(4), l: c.lap, f: c.finished ? 1 : 0, ft: c.finishTime, k: c.kills, d: c.dead ? 1 : 0, n: c.nitroOn ? 1 : 0, br: c.braking ? 1 : 0, sv: +c.steerVis.toFixed(2), sl: Math.round(c.slip), b: c.best, iv: c.invuln > 0 ? 1 : 0 });
+    for (const c of this.cars) if (c.local) out.push({ i: c.id, x: +c.x.toFixed(1), y: +c.y.toFixed(1), a: +c.a.toFixed(3), vx: +c.vx.toFixed(1), vy: +c.vy.toFixed(1), hp: Math.round(c.hp), mh: Math.round(c.maxHp), p: +c.p.toFixed(4), l: c.lap, f: c.finished ? 1 : 0, ft: c.finishTime, k: c.kills, d: c.dead ? 1 : 0, n: c.nitroOn ? 1 : 0, br: c.braking ? 1 : 0, sv: +c.steerVis.toFixed(2), sl: Math.round(c.slip), b: c.best, iv: c.invuln > 0 ? 1 : 0, z: Math.round(c.z || 0) });
     const human = this.human; this.net.send({ t: 'st', prog: human ? human.p : 0, kills: human ? human.kills : 0, cars: out });
   }
   onNet(m) {
@@ -515,7 +597,7 @@ export class Game {
       for (const s of m.cars || []) {
         const c = this.byId[s.i]; if (!c || !c.remote) continue;
         const first = c.netAge === 0; c.netAge = this.time;
-        c.tx = s.x; c.ty = s.y; c.ta = s.a; c.vx = s.vx; c.vy = s.vy; c.hp = s.hp; c.maxHp = s.mh || c.maxHp; c.p = s.p; c.lap = s.l; c.finished = !!s.f; c.finishTime = s.ft; c.kills = s.k; c.nitroOn = !!s.n; c.braking = !!s.br; c.steerVis = s.sv; c.slip = s.sl; c.best = s.b; c.invuln = s.iv ? 1 : 0;
+        c.tx = s.x; c.ty = s.y; c.ta = s.a; c.vx = s.vx; c.vy = s.vy; c.hp = s.hp; c.maxHp = s.mh || c.maxHp; c.p = s.p; c.lap = s.l; c.finished = !!s.f; c.finishTime = s.ft; c.kills = s.k; c.nitroOn = !!s.n; c.braking = !!s.br; c.steerVis = s.sv; c.slip = s.sl; c.best = s.b; c.invuln = s.iv ? 1 : 0; c.tz = s.z || 0;
         if (s.d && !c.dead) { c.dead = true; this.fx.explosion(c.x, c.y, 1.4); this.snd('explosion', c.x, c.y, 1); } else if (!s.d && c.dead) { c.dead = false; c.x = s.x; c.y = s.y; }
         if (first) { c.x = s.x; c.y = s.y; c.a = s.a; }
         c.ping = 0;
@@ -524,11 +606,13 @@ export class Game {
   }
   onNetEvent(e, from) {
     if (e.k === 'fire') {
-      const q = e.p, p = { id: q.id, owner: q.o, type: q.t, x: q.x, y: q.y, vx: q.vx, vy: q.vy, life: q.l, dmg: q.d, tgt: q.g, age: 0, idx: -1 };
+      const q = e.p, p = { id: q.id, owner: q.o, type: q.t, x: q.x, y: q.y, vx: q.vx, vy: q.vy, life: q.l, dmg: q.d, tgt: q.g, age: 0, idx: -1, z: q.z || 0, turret: !!q.u, z0: q.z || 9 };
       const nr = nearest(this.T, p.x, p.y, -1); p.idx = nr.f; this.proj.push(p);
-      if (q.t === 'rocket') this.snd('rocket', p.x, p.y, 0.8); else this.snd('gun', p.x, p.y, 0.4, 0.9 + Math.random() * 0.2);
-    } else if (e.k === 'mine') { this.mines.push({ id: e.m.id, owner: e.m.o, x: e.m.x, y: e.m.y, arm: WEAPONS.mine.arm, life: WEAPONS.mine.life, dmg: e.m.d }); this.snd('mine', e.m.x, e.m.y, 0.6); }
+      const ow = this.byId[q.o]; if (q.u && ow) ow.turA = Math.atan2(q.vy, q.vx);
+      if (q.t === 'rocket' || q.t === 'homing') this.snd('rocket', p.x, p.y, 0.8); else if (q.t === 'cluster') this.snd('mine', p.x, p.y, 0.8); else this.snd('gun', p.x, p.y, q.u ? 0.25 : 0.4, 0.9 + Math.random() * 0.2);
+    } else if (e.k === 'mine') { this.mines.push({ id: e.m.id, owner: e.m.o, z: e.m.z || 0, x: e.m.x, y: e.m.y, arm: WEAPONS.mine.arm, life: WEAPONS.mine.life, dmg: e.m.d }); this.snd('mine', e.m.x, e.m.y, 0.6); }
     else if (e.k === 'mineHit') { const i = this.mines.findIndex(m => m.id === e.id); if (i >= 0) { const m = this.mines[i]; this.mines.splice(i, 1); this.fx.explosion(m.x, m.y, 0.9); this.snd('explosion', m.x, m.y, 0.9); } }
+    else if (e.k === 'shield') { const i = this.proj.findIndex(q => q.id === e.id); if (i >= 0) { const q = this.proj[i]; this.proj.splice(i, 1); this.fx.explosion(q.x, q.y, 0.35); this.fx.ring(q.x, q.y, 40, 0.3, '120,220,255'); } }
     else if (e.k === 'pk') { const it = this.items.find(q => q.id === e.i); if (it && it.active) { it.active = false; it.respawn = RESPAWN_ITEM; this.fx.ring(it.x, it.y, 36, 0.4, '255,255,255'); } }
     else if (e.k === 'die') {
       const v = this.byId[e.c], k = e.by && this.byId[e.by];
@@ -543,7 +627,7 @@ export class Game {
     c.x += (c.tx - c.x) * k; c.y += (c.ty - c.y) * k; c.a += angDiff(c.a, c.ta) * k;
     if (Math.hypot(c.tx - c.x, c.ty - c.y) > 300) { c.x = c.tx; c.y = c.ty; }
     c.invuln = c.invuln; c.ping += dt;
-    const nr = nearest(this.T, c.x, c.y, c.pos < 0 ? -1 : c.pos, 40); c.pos = nr.f; c.lat = nr.lat;
+    const nr = nearest(this.T, c.x, c.y, c.pos < 0 ? -1 : c.pos, 40); c.pos = nr.f; c.lat = nr.lat; c.zRoad = nr.z; c.zAir = Math.max(0, (c.tz || 0) - nr.z); c.z = nr.z + c.zAir;
     const sp = Math.hypot(c.vx, c.vy); if (c.nitroOn && this.quality > 0) this.fx.fire(c.x - Math.cos(c.a) * c.len * 0.5, c.y - Math.sin(c.a) * c.len * 0.5, 0, 0, 7, 0.25);
     const hpf = c.hp / (c.maxHp || 1); if (hpf < 0.4 && Math.random() < 0.3 && !c.dead) this.fx.smoke(c.x, c.y, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20 - 10, 8, 1, '70,70,70', 0.5);
     if (c.slip > 95 && Math.random() < 0.4 && !c.dead) this.fx.smoke(c.x, c.y, 0, 0, 6, 0.5, '210,210,210', 0.25);
@@ -592,26 +676,37 @@ export class Game {
       for (const p of this.T.props) if ((p.type === 'lamp' || p.type === 'spire' || p.type === 'lava') && v.visible(p.x, p.y, 200)) drawProp2Glow(g, v, p, this.time);
       g.globalCompositeOperation = 'source-over';
     }
-    // flat items & mines
-    for (const it of this.items) if ((it.t === 'boost' || it.t === 'oil') && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
-    for (const m of this.mines) if (v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
-    // ghost
+    // ---- layered scene: ground -> barriers -> ground-level objects -> raised decks -> objects on decks -> tunnel roofs
+    const vis = this.vis = makeVis(T, v), high = o => (o.z || 0) >= ELEV_T;
+    if (T.hasElev || T.hasTun) drawDeckShadows(g, v, T, vis);
+    for (const it of this.items) if ((it.t === 'boost' || it.t === 'oil') && !high(it) && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
+    for (const m of this.mines) if (!high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
+    if (this.hazards) this.hazards.drawGround(g, v, this.time);
     if (this.ghost && this.state === 'racing') this.drawGhost(g);
-    // sorted objects
+    if (this.quality >= 1) drawWalls(g, v, T, vis);
+    // pickups hover under the cars (cars drive over them, never under)
+    for (const it of this.items) if (it.active && it.t !== 'boost' && it.t !== 'oil' && !high(it) && v.visible(it.x, it.y, 40)) drawItem(g, v, it, this.time);
     const list = [];
     const P = this.sortedProps;
     for (let i = 0; i < P.length; i++) { const p = P[i]; if (v.visible(p.x, p.y, p.w ? 220 : 60)) list.push({ y: p.y + (p.type === 'dune' || p.type === 'lava' ? -200 : 0), k: 0, o: p }); }
-    for (const it of this.items) if (it.active && it.t !== 'boost' && it.t !== 'oil' && v.visible(it.x, it.y, 40)) list.push({ y: it.y, k: 1, o: it });
-    for (const c of this.cars) if (!c.dead && v.visible(c.x, c.y, 60)) list.push({ y: c.y + 4, k: 2, o: c });
+    for (const c of this.cars) if (!c.dead && !high(c) && v.visible(c.x, c.y, 60)) list.push({ y: c.y + 4, k: 2, o: c });
+    if (this.hazards) this.hazards.collect(list, v);
     list.sort((a, b) => a.y - b.y);
-    for (const e of list) {
+    const drawEntry = e => {
       if (e.k === 0) drawProp(g, v, e.o, th, this.time);
-      else if (e.k === 1) drawItem(g, v, e.o, this.time);
-      else {
-        const c = e.o; const showTag = c !== this.human && this.mode !== 'attract';
-        drawCar(g, v, c, this.time, { night: this.night, tag: showTag, tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' });
-      }
+      else if (e.k === 3) e.fn(g, v, this.time);
+      else { const c = e.o; drawCar(g, v, c, this.time, { night: this.night, tag: c !== this.human && this.mode !== 'attract', tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' }); }
+    };
+    for (const e of list) drawEntry(e);
+    if (T.hasElev) {
+      drawDecks(g, v, T, vis);
+      for (const it of this.items) if (high(it) && v.visible(it.x, it.y, 60)) { if (it.t === 'boost' || it.t === 'oil' || it.active) drawItem(g, v, it, this.time); }
+      for (const m of this.mines) if (high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
+      const top = []; for (const c of this.cars) if (!c.dead && high(c) && v.visible(c.x, c.y, 60)) top.push({ y: c.z * 1000 + c.y, k: 2, o: c });
+      top.sort((a, b) => a.y - b.y); for (const e of top) drawEntry(e);
     }
+    if (T.hasTun) drawTunnels(g, v, T, vis);
+    if (this.hazards) this.hazards.drawTop(g, v, this.time);
     this.drawGantry(g);
     for (const p of this.proj) if (v.visible(p.x, p.y, 40)) drawProjectile(g, v, p, this.time);
     this.fx.draw(g, v);
@@ -620,7 +715,36 @@ export class Game {
       for (const c of this.cars) if (!c.dead && c.nitroOn) { const X = v.sx(c.x), Y = v.sy(c.y); const gr = g.createRadialGradient(X, Y, 0, X, Y, 90 * v.zoom); gr.addColorStop(0, 'rgba(80,170,255,0.3)'); gr.addColorStop(1, 'rgba(80,170,255,0)'); g.fillStyle = gr; g.beginPath(); g.arc(X, Y, 90 * v.zoom, 0, TAU); g.fill(); }
       g.globalCompositeOperation = 'source-over';
     }
+    this.drawAtmosphere(g, W, H, dt);
     this.cam.zoom = v.zoom;
+  }
+  /** weather / ambience in screen space (parallax follows the camera) + colour grade + vignette */
+  drawAtmosphere(g, W, H, dt) {
+    const T = this.T, th = T.theme, q = this.quality; if (q < 1) return; const v = this.view;
+    const kind = { snow: 'snow', volcano: 'ember', desert: 'dust', mesa: 'dust', warzone: 'ash', forest: 'leaf', coast: 'spray', city: 'rain', industrial: 'ash' }[th];
+    if (!this.amb) { this.amb = []; const n = q >= 2 ? 90 : 45; for (let i = 0; i < n; i++) this.amb.push({ x: Math.random(), y: Math.random(), z: 0.4 + Math.random() * 0.9, r: Math.random() * 6.28 }); this.lastCam = { x: this.cam.x, y: this.cam.y }; }
+    const dx = (this.cam.x - this.lastCam.x) * v.zoom / W, dy = (this.cam.y - this.lastCam.y) * v.zoom / H; this.lastCam.x = this.cam.x; this.lastCam.y = this.cam.y; const tm = this.time;
+    for (const p of this.amb) {
+      p.x -= dx * p.z; p.y -= dy * p.z;
+      if (kind === 'snow') { p.y += dt * (0.05 + p.z * 0.05); p.x += Math.sin(tm * 0.8 + p.r) * dt * 0.02; }
+      else if (kind === 'ember') { p.y -= dt * (0.04 + p.z * 0.06); p.x += Math.sin(tm * 1.5 + p.r) * dt * 0.03; }
+      else if (kind === 'rain') { p.y += dt * (0.9 + p.z * 0.5); p.x -= dt * 0.12; }
+      else if (kind === 'dust' || kind === 'ash') { p.x += dt * (0.05 + p.z * 0.06); p.y += Math.sin(tm * 0.6 + p.r) * dt * 0.01; }
+      else if (kind === 'leaf') { p.y += dt * 0.035 * p.z; p.x += dt * 0.04 + Math.sin(tm * 1.7 + p.r) * dt * 0.03; }
+      else if (kind === 'spray') { p.x += dt * 0.07 * p.z; p.y -= dt * 0.01; }
+      p.x = ((p.x % 1) + 1) % 1; p.y = ((p.y % 1) + 1) % 1; const X = p.x * W, Y = p.y * H, s = p.z * v.zoom;
+      if (kind === 'snow') { g.fillStyle = `rgba(255,255,255,${0.35 + p.z * 0.4})`; g.beginPath(); g.arc(X, Y, 2.3 * s * 1.4, 0, TAU); g.fill(); }
+      else if (kind === 'ember') { g.fillStyle = `rgba(255,${120 + p.z * 90 | 0},40,${0.4 + p.z * 0.4})`; g.fillRect(X, Y, 2.5 * s, 2.5 * s); }
+      else if (kind === 'rain') { g.strokeStyle = `rgba(190,215,255,${0.14 + p.z * 0.16})`; g.lineWidth = 1.2; g.beginPath(); g.moveTo(X, Y); g.lineTo(X - 5 * p.z, Y + 26 * p.z); g.stroke(); }
+      else if (kind === 'dust') { g.fillStyle = `rgba(235,205,150,${0.1 + p.z * 0.1})`; g.beginPath(); g.ellipse(X, Y, 14 * s, 2.4 * s, 0, 0, TAU); g.fill(); }
+      else if (kind === 'ash') { g.fillStyle = `rgba(170,165,150,${0.14 + p.z * 0.14})`; g.beginPath(); g.arc(X, Y, 1.8 * s, 0, TAU); g.fill(); }
+      else if (kind === 'leaf') { g.fillStyle = `rgba(${p.r > 3 ? '200,150,50' : '120,170,60'},${0.5})`; g.save(); g.translate(X, Y); g.rotate(p.r + tm); g.fillRect(-3 * s, -1.5 * s, 6 * s, 3 * s); g.restore(); }
+      else if (kind === 'spray') { g.fillStyle = `rgba(255,255,255,${0.1 + p.z * 0.1})`; g.beginPath(); g.arc(X, Y, 2 * s, 0, TAU); g.fill(); }
+    }
+    // colour grade + vignette
+    const tint = { desert: '255,170,70', mesa: '255,120,50', snow: '120,170,255', city: '200,70,255', volcano: '255,90,20', coast: '255,230,160', forest: '60,140,60', warzone: '200,190,120', industrial: '150,160,170' }[th] || '255,255,255';
+    g.fillStyle = `rgba(${tint},${this.night ? 0.05 : 0.07})`; g.globalCompositeOperation = 'overlay'; g.fillRect(0, 0, W, H); g.globalCompositeOperation = 'source-over';
+    const vg = g.createRadialGradient(W / 2, H / 2, H * 0.45, W / 2, H / 2, Math.max(W, H) * 0.78); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, `rgba(0,0,0,${this.night ? 0.5 : 0.34})`); g.fillStyle = vg; g.fillRect(0, 0, W, H);
   }
   drawGhost(g) {
     const gh = this.ghost; if (!gh || !gh.pts.length) return; const v = this.view;
@@ -630,11 +754,11 @@ export class Game {
   }
   drawGantry(g) {
     const T = this.T, v = this.view, s = T.start; if (!v.visible(s.x, s.y, 300)) return;
-    const hw = T.hw[0] + 20, nx = -Math.sin(s.a), ny = Math.cos(s.a), H1 = 120;
+    const hw = T.hw[0] + 20, nx = -Math.sin(s.a), ny = Math.cos(s.a), H1 = 78;
     const ax = s.x + nx * hw, ay = s.y + ny * hw, bx = s.x - nx * hw, by = s.y - ny * hw;
     g.lineCap = 'round';
     for (const [x, y] of [[ax, ay], [bx, by]]) { g.fillStyle = 'rgba(0,0,0,0.25)'; g.beginPath(); g.ellipse(v.sx(x) + 12 * v.zoom, v.sy(y) + 9 * v.zoom, 10 * v.zoom, 7 * v.zoom, 0, 0, TAU); g.fill(); g.strokeStyle = '#2a2d36'; g.lineWidth = 9 * v.zoom; g.beginPath(); g.moveTo(v.px(x, y, 0), v.py(x, y, 0)); g.lineTo(v.px(x, y, H1), v.py(x, y, H1)); g.stroke(); }
-    const A = [v.px(ax, ay, H1), v.py(ax, ay, H1)], B = [v.px(bx, by, H1), v.py(bx, by, H1)], A2 = [v.px(ax, ay, H1 - 36), v.py(ax, ay, H1 - 36)], B2 = [v.px(bx, by, H1 - 36), v.py(bx, by, H1 - 36)];
+    const A = [v.px(ax, ay, H1), v.py(ax, ay, H1)], B = [v.px(bx, by, H1), v.py(bx, by, H1)], A2 = [v.px(ax, ay, H1 - 28), v.py(ax, ay, H1 - 28)], B2 = [v.px(bx, by, H1 - 28), v.py(bx, by, H1 - 28)];
     g.fillStyle = '#1a1c22'; g.beginPath(); g.moveTo(A[0], A[1]); g.lineTo(B[0], B[1]); g.lineTo(B2[0], B2[1]); g.lineTo(A2[0], A2[1]); g.closePath(); g.fill();
     g.strokeStyle = '#ff5a1f'; g.lineWidth = 3 * v.zoom; g.stroke();
     const mx = (A[0] + B[0] + A2[0] + B2[0]) / 4, my = (A[1] + B[1] + A2[1] + B2[1]) / 4, ang = Math.atan2(B[1] - A[1], B[0] - A[0]);

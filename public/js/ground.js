@@ -71,16 +71,39 @@ export class Ground {
   }
 
   /* ---- baking ---- */
-  ringPath(g, inner, outer) { // closed ring: two loops at +/-(half-width + outer); used with the even-odd rule
+  /** cyclic runs of consecutive ground-level samples (raised decks are drawn dynamically instead) */
+  get runs() {
+    if (this._runs) return this._runs; const T = this.T, N = T.N;
+    if (!T.hasElev) return (this._runs = [{ closed: true, idx: null }]);
+    let st = -1; for (let i = 0; i < N; i++) if (!T.elev[i] && T.elev[(i - 1 + N) % N]) { st = i; break; }
+    const runs = []; let i = st, cnt = 0;
+    while (cnt < N) { if (!T.elev[i]) { const idx = []; while (cnt < N && !T.elev[i]) { idx.push(i); i = (i + 1) % N; cnt++; } runs.push({ closed: false, idx }); } else { i = (i + 1) % N; cnt++; } }
+    return (this._runs = runs);
+  }
+  off(j, e) { return e === 'v' ? this.T.wl[j] + 6 : e === 'w' ? this.T.wl[j] + 5 : e; }
+  pt(j, lat) { const T = this.T; return [T.x[j] - T.ty[j] * lat, T.y[j] + T.tx[j] * lat]; }
+  ringPath(g, inner, outer) { // road / verge area as one path (even-odd for a full loop, nonzero polygons per run otherwise)
     const T = this.T, N = T.N; g.beginPath();
-    for (let s = 1; s >= -1; s -= 2) {
-      for (let i = 0; i <= N; i++) { const j = i % N; const lat = s * (T.hw[j] + outer); const px = T.x[j] - T.ty[j] * lat, py = T.y[j] + T.tx[j] * lat; if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); }
-      g.closePath();
+    for (const r of this.runs) {
+      if (r.closed) { for (let s = 1; s >= -1; s -= 2) { for (let i = 0; i <= N; i++) { const j = i % N, [px, py] = this.pt(j, s * (T.hw[j] + this.off(j, outer))); if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); } g.closePath(); } }
+      else { const idx = r.idx; if (idx.length < 2) continue; idx.forEach((j, k) => { const [px, py] = this.pt(j, T.hw[j] + this.off(j, outer)); k ? g.lineTo(px, py) : g.moveTo(px, py); }); for (let k = idx.length - 1; k >= 0; k--) { const j = idx[k], [px, py] = this.pt(j, -(T.hw[j] + this.off(j, outer))); g.lineTo(px, py); } g.closePath(); }
     }
   }
-  edge(g, side, extra) {
+  get fillRule() { return this.T.hasElev ? 'nonzero' : 'evenodd'; }
+  edge(g, side, extra) { // polyline(s) along one side of the road
     const T = this.T, N = T.N;
-    for (let i = 0; i <= N; i++) { const j = i % N, lat = side * (T.hw[j] + extra); const px = T.x[j] - T.ty[j] * lat, py = T.y[j] + T.tx[j] * lat; if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); }
+    for (const r of this.runs) {
+      if (r.closed) { for (let i = 0; i <= N; i++) { const j = i % N, [px, py] = this.pt(j, side * (T.hw[j] + this.off(j, extra))); if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); } }
+      else r.idx.forEach((j, k) => { const [px, py] = this.pt(j, side * (T.hw[j] + this.off(j, extra))); k ? g.lineTo(px, py) : g.moveTo(px, py); });
+    }
+  }
+  /** polyline(s) at a fraction of the half-width (racing-line rubber) */
+  edgeFrac(g, f) {
+    const T = this.T, N = T.N;
+    for (const r of this.runs) {
+      if (r.closed) { for (let i = 0; i <= N; i++) { const j = i % N, [px, py] = this.pt(j, f * T.hw[j]); if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); } }
+      else r.idx.forEach((j, k) => { const [px, py] = this.pt(j, f * T.hw[j]); k ? g.lineTo(px, py) : g.moveTo(px, py); });
+    }
   }
   bake(cv, ox, oy) {
     const T = this.T, th = T.th, g = cv.getContext('2d'), N = T.N, q = this.q;
@@ -101,13 +124,13 @@ export class Ground {
     if (q >= 1) { g.fillStyle = noisePattern(g, 'light'); g.fillRect(ox, oy, TS, TS); g.fillStyle = noisePattern(g, 'dark'); g.fillRect(ox, oy, TS, TS); }
     this.terrainFeatures(g, ox, oy, C);
     // verge
-    this.ringPath(g, 0, VERGE + 6); g.fillStyle = th.verge; g.fill('evenodd');
-    if (q >= 1) { g.fillStyle = noisePattern(g, 'dark'); g.fill('evenodd'); }
+    this.ringPath(g, 0, 'v'); g.fillStyle = th.verge; g.fill(this.fillRule);
+    if (q >= 1) { g.fillStyle = noisePattern(g, 'dark'); g.fill(this.fillRule); }
     // soft shoulder fade
-    g.save(); g.lineJoin = 'round'; g.globalAlpha = 0.35; g.strokeStyle = th.ground2; g.lineWidth = 6; g.beginPath(); this.edge(g, 1, VERGE + 8); this.edge(g, -1, VERGE + 8); g.stroke(); g.restore();
+    g.save(); g.lineJoin = 'round'; g.globalAlpha = 0.35; g.strokeStyle = th.ground2; g.lineWidth = 6; g.beginPath(); this.edge(g, 1, 'v'); this.edge(g, -1, 'v'); g.stroke(); g.restore();
     // tarmac
-    this.ringPath(g, 0, 0); g.fillStyle = th.road; g.fill('evenodd');
-    g.save(); this.ringPath(g, 0, 0); g.clip('evenodd');
+    this.ringPath(g, 0, 0); g.fillStyle = th.road; g.fill(this.fillRule);
+    g.save(); this.ringPath(g, 0, 0); g.clip(this.fillRule);
     if (q >= 1) { g.fillStyle = noisePattern(g, 'dark'); g.fillRect(ox, oy, TS, TS); g.fillStyle = noisePattern(g, 'light'); g.fillRect(ox, oy, TS, TS); g.fillStyle = noisePattern(g, 'grit'); g.fillRect(ox, oy, TS, TS); }
     // patches + wear
     const R = 200;
@@ -118,11 +141,11 @@ export class Ground {
     }
     // racing-line rubber
     g.lineJoin = 'round'; g.strokeStyle = 'rgba(0,0,0,0.10)'; g.lineWidth = 34;
-    for (const s of [-0.38, 0.38]) { g.beginPath(); for (let i = 0; i <= N; i++) { const j = i % N, lat = s * T.hw[j]; const px = T.x[j] - T.ty[j] * lat, py = T.y[j] + T.tx[j] * lat; if (i === 0) g.moveTo(px, py); else g.lineTo(px, py); } g.stroke(); }
+    for (const s of [-0.38, 0.38]) { g.beginPath(); this.edgeFrac(g, s); g.stroke(); }
     g.restore();
     // kerbs on corners
     for (let i = 0; i < N; i++) {
-      const c = T.curv[i]; if (Math.abs(c) < 0.0007) continue;
+      const c = T.curv[i]; if (Math.abs(c) < 0.0007 || T.elev[i] || T.elev[(i + 1) % N]) continue;
       const j = (i + 1) % N, inside = c > 0 ? -1 : 1;      // positive curvature = turning right => inside is +1? (screen coords) handle both sides lightly
       for (const side of [-inside, inside]) {
         const a0 = T.hw[i], a1 = T.hw[j];
@@ -136,7 +159,7 @@ export class Ground {
     g.lineJoin = 'round'; g.strokeStyle = th.line; g.globalAlpha = 0.85; g.lineWidth = 4; g.beginPath(); this.edge(g, 1, -9); this.edge(g, -1, -9); g.stroke(); g.globalAlpha = 1;
     // centre dashes
     g.strokeStyle = th.line; g.globalAlpha = 0.5; g.lineWidth = 3; g.beginPath();
-    for (let i = 0; i < N; i += 4) { const j = (i + 1) % N, k = (i + 2) % N; g.moveTo(T.x[i], T.y[i]); g.lineTo(T.x[j], T.y[j]); g.lineTo(T.x[k], T.y[k]); }
+    for (let i = 0; i < N; i += 4) { const j = (i + 1) % N, k = (i + 2) % N; if (T.elev[i] || T.elev[j] || T.elev[k]) continue; g.moveTo(T.x[i], T.y[i]); g.lineTo(T.x[j], T.y[j]); g.lineTo(T.x[k], T.y[k]); }
     g.stroke(); g.globalAlpha = 1;
     // start / finish
     const hw0 = T.hw[0], sq = 14, nx = -T.ty[0], ny = T.tx[0], tx = T.tx[0], ty = T.ty[0];
@@ -152,18 +175,14 @@ export class Ground {
       g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 2;
       for (let r = 0; r < 6; r++) for (const side of [-0.5, 0.5]) { const p = gridPos(T, r * 2 + (side > 0 ? 1 : 0)); g.save(); g.translate(p.x, p.y); g.rotate(p.a); g.strokeRect(-22, -12, 44, 24); g.restore(); }
     }
-    // walls (shadow, side face, top, seams)
+    // barrier shadows are baked; the barriers themselves are drawn as real 3D geometry by structures.js (baked here only on Low quality)
     g.lineJoin = 'round'; g.lineCap = 'butt';
     for (const side of [-1, 1]) {
-      const e = VERGE + 5;
-      g.save();
-      g.strokeStyle = 'rgba(0,0,0,0.38)'; g.lineWidth = 14; g.translate(6, 9); g.beginPath(); this.edge(g, side, e); g.stroke(); g.restore();
-      g.strokeStyle = shade(th.wall, -0.35); g.lineWidth = 12; g.save(); g.translate(0, 5); g.beginPath(); this.edge(g, side, e); g.stroke(); g.restore();
-      g.strokeStyle = th.wall; g.lineWidth = 11; g.beginPath(); this.edge(g, side, e); g.stroke();
-      g.strokeStyle = th.wallTop; g.lineWidth = 7; g.beginPath(); this.edge(g, side, e); g.stroke();
-      g.strokeStyle = shade(th.wallTop, -0.2); g.lineWidth = 7; g.setLineDash([2, 42]); g.beginPath(); this.edge(g, side, e); g.stroke(); g.setLineDash([]);
-      // warning stripes on tight corners
-      g.lineWidth = 3; for (let i = 0; i < N; i++) { if (Math.abs(T.curv[i]) < 0.0012 || i % 2) continue; const j = (i + 1) % N; const lat = side * (T.hw[i] + e); g.strokeStyle = (i >> 1) & 1 ? '#f2c500' : '#222'; g.beginPath(); g.moveTo(T.x[i] - T.ty[i] * lat, T.y[i] + T.tx[i] * lat); const lat2 = side * (T.hw[j] + e); g.lineTo(T.x[j] - T.ty[j] * lat2, T.y[j] + T.tx[j] * lat2); g.stroke(); }
+      g.save(); g.strokeStyle = 'rgba(0,0,0,0.38)'; g.lineWidth = 14; g.translate(6, 9); g.beginPath(); this.edge(g, side, 'w'); g.stroke(); g.restore();
+      if (q >= 1) continue;
+      g.strokeStyle = shade(th.wall, -0.35); g.lineWidth = 12; g.save(); g.translate(0, 5); g.beginPath(); this.edge(g, side, 'w'); g.stroke(); g.restore();
+      g.strokeStyle = th.wall; g.lineWidth = 11; g.beginPath(); this.edge(g, side, 'w'); g.stroke();
+      g.strokeStyle = th.wallTop; g.lineWidth = 7; g.beginPath(); this.edge(g, side, 'w'); g.stroke();
     }
     g.restore();
   }

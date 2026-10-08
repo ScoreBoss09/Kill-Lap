@@ -1,5 +1,6 @@
 import { clamp, fmtTime, TAU } from './util.js';
 import Input from './input.js';
+import { portrait } from './drivers.js';
 
 const FONT = 'Impact, "Arial Black", "Haettenschweiler", sans-serif';
 const F2 = '"Trebuchet MS", "Segoe UI", Arial, sans-serif';
@@ -59,14 +60,14 @@ export function drawHUD(g, game, W, H, opts = {}) {
   g.restore();
   // pickups on the minimap are too noisy; just show mines of ours
   // ---- standings (right, below minimap)
-  const rows = (game.order || game.cars).slice(0, 6), rh = 24 * u; let sy = my + ms + 12 * u;
+  const rows = (game.order || game.cars).slice(0, 6), rh = 26 * u; let sy = my + ms + 12 * u;
   panel(g, mx, sy, ms, rows.length * rh + 12 * u, 0.45);
   rows.forEach((c, i) => {
     const y = sy + 6 * u + (i + 1) * rh - 7 * u; const me = c === car;
     if (me) { g.fillStyle = 'rgba(255,106,26,0.25)'; g.fillRect(mx + 5, y - rh + 7 * u, ms - 5, rh - 2); }
     text(g, String(i + 1), mx + 14 * u, y, 15 * u, '#aaa', 'left', F2, false);
-    g.fillStyle = c.color; g.fillRect(mx + 30 * u, y - 11 * u, 9 * u, 11 * u);
-    text(g, c.name.slice(0, 11), mx + 46 * u, y, 15 * u, me ? '#fff' : '#ddd', 'left', F2, false);
+    g.fillStyle = c.color; g.fillRect(mx + 28 * u, y - 15 * u, 3 * u, 17 * u); const pr = Math.round(19 * u); try { g.drawImage(portrait(c.name, 48), mx + 33 * u, y - 16 * u, pr, pr); } catch {}
+    text(g, c.name.slice(0, 11), mx + 56 * u, y, 15 * u, me ? '#fff' : '#ddd', 'left', F2, false);
     const right = c.finished ? '✓' : c.dead ? '✖' : c.kills ? c.kills + '☠' : '';
     text(g, right, mx + ms - 8 * u, y, 14 * u, c.dead ? '#ff6a5a' : '#ffd23a', 'right', F2, false);
   });
@@ -87,27 +88,36 @@ export function drawHUD(g, game, W, H, opts = {}) {
   for (let i = 0; i < car.stats.nitroCharges + 2; i++) { if (i >= Math.max(car.nitro, 0) && i >= car.stats.nitroCharges - 1 + 0) break; g.fillStyle = i < car.nitro ? '#46b7ff' : '#333'; g.beginPath(); g.arc(cx - (car.nitro - 1) * 7 * u + i * 14 * u, cy - 36 * u, 4.5 * u, 0, TAU); g.fill(); }
   if (car.nitroT > 0) { g.fillStyle = '#46b7ff'; g.fillRect(cx - 34 * u, cy - 56 * u, 68 * u * (car.nitroT / 2), 5 * u); }
   // health bar + weapons
-  const hx = cx + R + 14 * u, hy = H - pad - 74 * u, hw = 230 * u, hh = 20 * u;
-  panel(g, hx - 8 * u, hy - 30 * u, hw + 16 * u, (game.weapons ? 108 : 66) * u, 0.5);
+  const hx = cx + R + 14 * u, hy = H - pad - (car.stats.homingAmmo || car.stats.clusterAmmo || car.stats.guardCharges || car.stats.mods.turret ? 116 : 74) * u, hw = 250 * u, hh = 20 * u;
+  panel(g, hx - 8 * u, hy - 30 * u, hw + 16 * u, (game.weapons ? (car.stats.homingAmmo || car.stats.clusterAmmo || car.stats.guardCharges || car.stats.mods.turret ? 150 : 108) : 66) * u, 0.5);
   text(g, 'ARMOUR', hx, hy - 10 * u, 15 * u, '#aaa', 'left', F2, false); text(g, Math.ceil(Math.max(0, car.hp)) + ' / ' + Math.round(car.maxHp), hx + hw, hy - 10 * u, 15 * u, '#ddd', 'right', F2, false);
   g.fillStyle = 'rgba(255,255,255,0.1)'; g.fillRect(hx, hy, hw, hh);
   g.fillStyle = hpf > 0.5 ? '#46d16a' : hpf > 0.25 ? '#f2c230' : '#ee4b35'; g.fillRect(hx, hy, hw * clamp(hpf, 0, 1), hh);
   g.strokeStyle = 'rgba(0,0,0,0.6)'; g.lineWidth = 1; for (let i = 1; i < 10; i++) { g.beginPath(); g.moveTo(hx + hw * i / 10, hy); g.lineTo(hx + hw * i / 10, hy + hh); g.stroke(); }
   if (game.weapons) {
-    const bw = hw / 3, wy = hy + hh + 12 * u, st = car.stats;
-    const slot = (i, label, key, n, max, color) => {
-      const x = hx + i * bw; text(g, label, x, wy + 12 * u, 12 * u, color, 'left', F2, false); text(g, String(n), x + bw - 12 * u, wy + 12 * u, 14 * u, n > 0 ? '#fff' : '#777', 'right', F2, false);
-      g.fillStyle = 'rgba(255,255,255,0.1)'; g.fillRect(x, wy + 18 * u, bw - 12 * u, 6 * u); g.fillStyle = n > 0 ? color : '#555'; g.fillRect(x, wy + 18 * u, (bw - 12 * u) * clamp(n / max, 0, 1), 6 * u);
-      text(g, '[' + key + ']', x, wy + 40 * u, 11 * u, '#777', 'left', F2, false);
+    const bw = hw / 3, wy = hy + hh + 12 * u, st = car.stats, locked = car.lap < 1, mods = st.mods, extra = st.homingAmmo || st.clusterAmmo || st.guardCharges || mods.turret;
+    g.save(); if (locked) g.globalAlpha = 0.38;
+    const slot = (i, label, key, n, max, color, row = 0) => {
+      const x = hx + i * bw, y = wy + row * 44 * u; text(g, label, x, y + 12 * u, 12 * u, color, 'left', F2, false); text(g, String(n), x + bw - 12 * u, y + 12 * u, 14 * u, n > 0 ? '#fff' : '#777', 'right', F2, false);
+      g.fillStyle = 'rgba(255,255,255,0.1)'; g.fillRect(x, y + 18 * u, bw - 12 * u, 6 * u); g.fillStyle = n > 0 ? color : '#555'; g.fillRect(x, y + 18 * u, (bw - 12 * u) * clamp(n / Math.max(1, max), 0, 1), 6 * u);
+      text(g, '[' + key + ']', x, y + 40 * u, 11 * u, '#777', 'left', F2, false);
     };
     const kb = !pad_;
     slot(0, 'GUN', kb ? 'SPACE' : 'A', car.ammo.mg, st.mgAmmo, '#ffd23a'); slot(1, 'ROCKET', kb ? 'E' : 'X', car.ammo.rocket, st.rocketAmmo, '#ff6a3a'); slot(2, 'MINES', kb ? 'F' : 'B', car.ammo.mine, st.mineAmmo, '#a0e060');
+    if (extra) {
+      if (car.special) { const sel = car.special, nm = sel === 'homing' ? 'HOMING' : 'CLUSTER'; slot(0, nm, kb ? 'G / Q switch' : 'D-up / D-down', car.ammo[sel], sel === 'homing' ? st.homingAmmo : st.clusterAmmo, '#7fd4ff', 1); }
+      if (st.guardCharges) { const x = hx + bw, y = wy + 44 * u; text(g, 'REAR GUARD', x, y + 12 * u, 12 * u, '#9fe3ff', 'left', F2, false); for (let k = 0; k < st.guardCharges; k++) { g.fillStyle = k < car.guard ? '#46ff7a' : '#444'; g.beginPath(); g.arc(x + 6 * u + k * 16 * u, y + 24 * u, 5 * u, 0, TAU); g.fill(); } }
+      if (mods.turret) text(g, 'TURRET AUTO', hx + 2 * bw, wy + 44 * u + 12 * u, 12 * u, '#7dffe8', 'left', F2, false);
+    }
+    g.restore();
+    if (locked) text(g, 'WEAPONS LOCKED - FINISH LAP 1', hx + hw / 2, wy + 24 * u, 13 * u, '#ffb347', 'center', F2);
   }
   // ---- messages / countdown
   if (game.state === 'countdown') {
     const n = Math.ceil(game.cd); if (n >= 1 && n <= 3) { const f = 1 - (game.cd - Math.floor(game.cd)); g.globalAlpha = 1 - f * 0.6; text(g, String(n), W / 2, H * 0.38 + 80 * u, (200 + f * 60) * u, n === 1 ? '#ffd23a' : '#fff', 'center'); g.globalAlpha = 1; }
   }
   if (game.msgs.length) { const m = game.msgs[game.msgs.length - 1]; const f = clamp(m.t / m.max, 0, 1); g.globalAlpha = Math.min(1, f * 3); text(g, m.text, W / 2, H * 0.28, (58 + (1 - f) * 10) * u, m.color, 'center'); g.globalAlpha = 1; }
+  if (game.warn && game.warn.text) { const w = game.warn, bw = 380 * u; g.fillStyle = 'rgba(10,6,4,0.72)'; g.fillRect(W / 2 - bw / 2, H * 0.1 - 26 * u, bw, 40 * u); g.fillStyle = Math.floor(game.time * 5) % 2 ? w.c : '#ffffff'; g.fillRect(W / 2 - bw / 2, H * 0.1 - 26 * u, 5 * u, 40 * u); g.fillRect(W / 2 + bw / 2 - 5 * u, H * 0.1 - 26 * u, 5 * u, 40 * u); text(g, '⚠ ' + w.text, W / 2, H * 0.1 + 4 * u, 28 * u, Math.floor(game.time * 5) % 2 ? w.c : '#fff', 'center'); }
   if (car.wrongWay > 1 && !car.finished) text(g, 'WRONG WAY', W / 2, H * 0.2, 54 * u, Math.floor(game.time * 4) % 2 ? '#ff3a2a' : '#fff', 'center');
   if (car.dead) { text(g, 'WRECKED', W / 2, H * 0.42, 90 * u, '#ff3a2a', 'center'); text(g, 'Respawning in ' + Math.max(0, car.respawnT).toFixed(1) + 's', W / 2, H * 0.42 + 36 * u, 24 * u, '#fff', 'center', F2); }
   if (car.finished && game.net && !game.over) text(g, 'FINISHED - waiting for other racers...', W / 2, H * 0.62, 26 * u, '#fff', 'center', F2);
