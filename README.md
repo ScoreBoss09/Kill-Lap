@@ -55,6 +55,9 @@ Keyboard bindings can be changed in *Controls*. Gamepad dead-zone, steering sens
 * **Weapons are locked on the first lap** for everyone. The rocket is unguided; homing missiles are the guided option.
 * **Rivals with personalities** - 16 named drivers with portraits, bios and driving styles (aggressive, precise, defensive...). A "Meet the field" screen shows who you're racing.
 * **Self-crossing circuits** - almost every circuit crosses itself: figure-of-eights, a trefoil with three crossings, loop-the-loops and lobed chains, with a **flyover at every crossing** and **tunnels** through the long gaps. Random and daily tracks do it too. Tunnels turn see-through while you drive inside them, so you never lose sight of your car. Each bot handles a level crossing in its own way: daredevils floor it (and sometimes get flattened), cautious drivers lift off and time their run to cross just after the train - nobody parks at the barrier.
+* **Traffic** - *Motorway Mayhem* and *Rush Hour* put you on two-way roads full of everyday cars, lorries and buses (some coming the other way), with side roads whose traffic crosses the circuit when their lights turn green. Barge them, shoot them (+$75 a wreck); the bots steer round them.
+* **Pedestrians** - people stroll along the verges and wander across the road; hit one and they go flying (+$25, lots of blood).
+* **Career finale** - finishing the last race of a series brings up a CHAMPION / CONGRATULATIONS / SERIES FAILED screen with your final position and the standings.
 * **Track hazards** - a **railway that runs right across the map** with a train that flattens anything in its way, and a working level crossing (signals, barriers, bell) everywhere the line meets the road, a **pedestrian crossing** in the city, **water fords** (hit them above about 120 km/h and you aquaplane straight across with no slowdown), **jump ramps**, erupting **lava vents**, a **tidal wave** that rolls in off the ocean (coastal maps have a real sea along one edge), and an **air raid** in the Warzone where a bomber drops bombs (marked on the road a moment before they land).
 * **Raised roads, banking and mountains** - flyovers where the track crosses over itself, tunnels through hills, real 3D barriers, **banked curves** (the road surface tilts and the outer edge rises) and two **mountain maps** (Alpine Ascent, Red Summit) where switchback roads climb higher and higher up a mountain. Climbs slow you down and descents speed you up.
 * **Time Trial** - chase your **ghost**; your best lap is saved per track.
@@ -130,7 +133,7 @@ public/index.html       the game page
 public/css/style.css    menu styling
 public/js/main.js       app shell: main loop, race lifecycle, career, rewards
 public/js/game.js       race simulation: physics, weapons, AI, laps, pickups, net sync, world rendering
-public/js/tracks.js     track format, spline compiler, collision queries, scenery, 23 built-in maps, generator
+public/js/tracks.js     track format, spline compiler, collision queries, scenery, 25 built-in maps, generator
 public/js/ground.js     lazily baked terrain tiles (road, kerbs, decals), minimap
 public/js/structures.js 3D barriers, raised decks, pillars, tunnels
 public/js/hazards.js    trains, pedestrians, fords, ramps, lava, tidal wave, bomber
@@ -148,6 +151,10 @@ tools/                  dev tools: track validator, headless smoke/flow/multipla
 ```
 
 Run `npm test` to validate every built-in and 40 generated tracks. The scripts in `tools/` (`smoke.mjs`, `sim.mjs`, `mptest.mjs`, `flowtest.mjs`, `padtest.mjs`, ...) are headless-Chromium tests that were used to develop the game; they need [Playwright](https://playwright.dev) and a running server.
+
+## Performance tips
+
+If the game stutters, open **Settings → Graphics quality** and pick *Low*: it renders at a capped lower resolution, bakes the terrain at half resolution, turns off textures on bridges and tunnels, thins out small scenery and drops car lights. The game also lowers its own render resolution automatically if the frame rate stays under about 40 fps. Flyovers, tunnels and barriers are drawn into a cached layer, and engine sounds play only for the nearest cars, so heavy scenes (lots of cars boosting, overpasses) cost much less than before.
 
 ## Troubleshooting
 

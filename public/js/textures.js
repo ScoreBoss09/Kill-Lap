@@ -5,6 +5,7 @@ export default T;
 /** world size (px) that one texture tile covers - a car is about 40px long */
 const TILE = { ground: 512, road: 256, verge: 256, rock: 256, wall: 256, water: 192, roof: 140 };
 const kind = name => name.split('_')[0];
+const ALIAS = { highway: 'forest' }; // themes without their own textures borrow another theme's
 
 T.load = async function () {
   let files = [];
@@ -16,6 +17,7 @@ T.load = async function () {
 };
 /** pattern for e.g. get('ground', 'desert') -> tries ground_desert, then ground */
 T.get = function (type, theme) {
+  if (theme && !this.images[type + '_' + theme] && ALIAS[theme]) theme = ALIAS[theme];
   const key = (theme && this.images[type + '_' + theme]) ? type + '_' + theme : this.images[type] ? type : null; if (!key) return null;
   if (!this.patterns[key]) {
     const img = this.images[key], c = document.createElement('canvas'); c.width = 4; c.height = 4; const p = c.getContext('2d').createPattern(img, 'repeat');
@@ -26,6 +28,7 @@ T.get = function (type, theme) {
 
 /** pattern anchored to the world (follows the camera) for dynamically drawn 3D surfaces; call once per frame per texture */
 T.world = function (v, type, theme, sx = 0, sy = 0) {
+  if (theme && !this.images[type + '_' + theme] && ALIAS[theme]) theme = ALIAS[theme];
   const key = (theme && this.images[type + '_' + theme]) ? type + '_' + theme : this.images[type] ? type : null; if (!key) return null;
   const img = this.images[key]; this.wp = this.wp || {};
   if (!this.wp[key]) { const c = document.createElement('canvas'); c.width = 4; c.height = 4; this.wp[key] = c.getContext('2d').createPattern(img, 'repeat'); }
@@ -36,6 +39,7 @@ T.world = function (v, type, theme, sx = 0, sy = 0) {
 
 /** like world(), but the texture is pre-tinted towards a colour (one fill instead of texture + tint pass) */
 T.worldTinted = function (v, type, theme, col, alpha) {
+  if (theme && !this.images[type + '_' + theme] && ALIAS[theme]) theme = ALIAS[theme];
   const key = (theme && this.images[type + '_' + theme]) ? type + '_' + theme : this.images[type] ? type : null; if (!key) return null;
   const k2 = key + '|' + col + '|' + alpha; this.tp = this.tp || {}; this.tpt = this.tpt || {};
   let p = this.tp[k2];

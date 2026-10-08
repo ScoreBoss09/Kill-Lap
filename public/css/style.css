@@ -88,3 +88,46 @@ label { display:flex; flex-direction:column; gap:4px; color:var(--mut); font-siz
 .lineup .dgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:10px; overflow:auto; flex:1; min-height:0; padding:4px; align-content:start; } .dcard { display:flex; gap:12px; background:var(--pan); border:1px solid var(--line); border-left:4px solid var(--acc); padding:8px; } .dcard canvas { width:96px; height:96px; border-radius:5px; flex:none; border:1px solid #000; } .dinfo { display:flex; flex-direction:column; gap:2px; min-width:0; } .dinfo b { font-family:var(--display); font-size:20px; letter-spacing:.05em; } .nick { color:var(--acc2); font-size:12px; font-style:italic; } .gold { color:var(--acc2); } .dstats { display:flex; gap:12px; font-size:10px; color:var(--mut); letter-spacing:.06em; margin-top:2px; }
 #editor.menumode .edbar, #editor.menumode .edpanel { box-shadow:0 0 0 2px var(--acc); } #editor.menumode #edcv { opacity:.6; }
 .title-screen .build-tag { grid-column:1/-1; grid-row:3; align-self:center; justify-self:start; color:var(--mut); font-size:11px; letter-spacing:.06em; opacity:.8; }
+/* ---- end-of-series finale */
+.finale { background:radial-gradient(circle at 50% 40%, rgba(40,30,10,.75), rgba(0,0,0,.9)); overflow:hidden; }
+.finale.bad { background:radial-gradient(circle at 50% 40%, rgba(60,8,8,.8), rgba(0,0,0,.92)); }
+.finale-card { text-align:center; min-width:min(560px,92vw); animation:pop .5s cubic-bezier(.2,1.6,.4,1); border-width:2px; }
+.finale.good .finale-card { border-color:#ffd23a; box-shadow:0 0 60px rgba(255,210,58,.35); }
+.finale.bad .finale-card { border-color:#e8402f; box-shadow:0 0 60px rgba(232,64,47,.3); }
+.f-medal { font-size:84px; line-height:1; animation:bob 1.6s ease-in-out infinite; }
+.f-head { font-size:clamp(36px,6vw,64px); letter-spacing:.06em; margin:6px 0 4px; }
+.finale.good .f-head { color:#ffd23a; text-shadow:0 0 24px rgba(255,210,58,.6); } .finale.bad .f-head { color:#ff5a4a; text-shadow:0 0 24px rgba(255,60,40,.5); }
+.f-sub { color:var(--mut); margin-bottom:14px; }
+.f-place { display:flex; align-items:baseline; justify-content:center; gap:12px; margin:8px 0 12px; } .f-place b { font-size:56px; } .f-place span { color:var(--mut); letter-spacing:.1em; font-size:13px; }
+.f-line { margin:4px 0; } .f-line.gold { color:#ffd23a; }
+.finale .tbl { margin:12px auto; }
+.confetti { position:absolute; inset:0; pointer-events:none; } .confetti i { position:absolute; top:-20px; width:9px; height:14px; border-radius:2px; animation:fall 3.2s linear infinite; opacity:.9; }
+@keyframes fall { to { transform:translateY(110vh) rotate(720deg); } }
+@keyframes pop { from { transform:scale(.6); opacity:0; } to { transform:none; opacity:1; } }
+@keyframes bob { 50% { transform:translateY(-8px) rotate(-4deg); } }
+.finale-card { max-height:94vh; overflow:auto; padding-top:14px; } .f-medal { font-size:64px; } .f-head { margin:2px 0; } .f-place { margin:4px 0 8px; } .f-place b { font-size:48px; }
+.finale .tbl td, .finale .tbl th { padding:3px 10px; }
+/* ---- menu polish */
+.screen::before { content:''; position:absolute; inset:0; pointer-events:none; background:repeating-linear-gradient(115deg, rgba(255,255,255,.012) 0 2px, transparent 2px 9px), radial-gradient(ellipse at 20% 0%, rgba(255,106,26,.10), transparent 55%); }
+.screen { position:relative; }
+.frame-head { border-bottom:0; position:relative; } .frame-head::after { content:''; position:absolute; left:0; right:0; bottom:-3px; height:3px; background:linear-gradient(90deg, var(--acc), var(--acc2) 40%, rgba(255,210,58,0) 85%); }
+.btn { transition:transform .12s ease, background .12s ease, border-color .12s ease, box-shadow .12s ease; position:relative; overflow:hidden; }
+.btn::after { content:''; position:absolute; inset:0; background:linear-gradient(100deg, transparent 30%, rgba(255,255,255,.10) 50%, transparent 70%); transform:translateX(-120%); transition:transform .45s ease; pointer-events:none; }
+.btn:hover::after, .btn.focus::after { transform:translateX(120%); }
+.mbtn { display:flex; align-items:center; gap:14px; text-align:left; padding:8px 18px; }
+.mbtn .mi { font-size:22px; width:30px; text-align:center; filter:grayscale(.35); } .mbtn.focus .mi, .mbtn:hover .mi { filter:none; transform:scale(1.15); transition:transform .15s; }
+.mbtn .ml { display:flex; flex-direction:column; line-height:1.05; } .mbtn small { font-family:var(--ui); font-size:11px; letter-spacing:.06em; text-transform:none; color:var(--mut); margin-top:3px; }
+.mbtn.focus small, .mbtn:hover small { color:#ffd9bf; }
+.title-screen .menu { gap:5px; }
+.feat { display:flex; gap:10px; align-items:center; text-align:left; background:linear-gradient(135deg, rgba(40,30,22,.92), rgba(20,23,29,.92)); border:1px solid #4a3a2c; border-left:3px solid var(--acc2); padding:8px; color:var(--txt); cursor:pointer; font-family:var(--ui); border-radius:4px; transition:transform .12s, border-color .12s; }
+.feat b { font-family:var(--display); font-weight:400; letter-spacing:.05em; font-size:16px; color:var(--acc2); } .feat canvas { border-radius:3px; flex:none; }
+.feat:hover, .feat.focus { transform:translateX(-4px); border-color:var(--acc); box-shadow:0 0 18px rgba(255,106,26,.25); }
+.panel.profile { background:linear-gradient(135deg, rgba(28,32,40,.95), rgba(16,18,24,.92)); box-shadow:inset 0 0 0 1px rgba(255,255,255,.03), 0 8px 24px rgba(0,0,0,.35); }
+.panel { box-shadow:0 6px 20px rgba(0,0,0,.25); }
+.scard { transition:transform .15s ease, box-shadow .15s ease, border-color .15s; } .scard:hover, .scard.focus { transform:translateY(-4px); box-shadow:0 10px 30px rgba(0,0,0,.45), 0 0 24px rgba(255,106,26,.2); }
+.scard.locked { filter:saturate(.3) brightness(.8); }
+.tcard { transition:transform .12s ease, box-shadow .12s ease; } .tcard:hover, .tcard.focus { transform:translateY(-3px) scale(1.02); box-shadow:0 8px 22px rgba(0,0,0,.5); }
+h1 { background:linear-gradient(180deg, #fff 55%, #ffd9bf); -webkit-background-clip:text; background-clip:text; color:transparent; text-shadow:none; filter:drop-shadow(0 3px 0 #000); }
+.title-screen .mbtn { font-size:clamp(15px,2.5vh,22px); padding:clamp(4px,0.75vh,9px) 16px; }
+.title-screen .mbtn .mi { font-size:clamp(16px,2.4vh,22px); }
+@media (max-height:800px) { .title-screen .mbtn small { display:none; } .title-screen .logo-main { font-size:clamp(48px,10vh,120px); } }

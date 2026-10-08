@@ -18,6 +18,12 @@ function text(g, s, x, y, size, color = '#fff', align = 'left', font = FONT, str
   g.fillStyle = color; g.fillText(s, x, y);
 }
 
+const EDGE = new Map();
+/** screen-edge colour glow, rendered once at low resolution and stretched (no full-screen gradient every frame) */
+function edgeGlow(rgb, a, inner) {
+  const k = rgb + a + inner; let c = EDGE.get(k); if (c) return c; c = document.createElement('canvas'); c.width = 320; c.height = 180; const x = c.getContext('2d');
+  const gr = x.createRadialGradient(160, 90, 180 * inner, 160, 90, 180 * 0.95); gr.addColorStop(0, `rgba(${rgb},0)`); gr.addColorStop(1, `rgba(${rgb},${a})`); x.fillStyle = gr; x.fillRect(0, 0, 320, 180); EDGE.set(k, c); return c;
+}
 export function drawHUD(g, game, W, H, opts = {}) {
   const car = game.human; if (!car || game.mode === 'attract') return;
   const u = clamp(Math.min(W, H * 1.6) / 1280, 0.62, 1.5), pad = 18 * u;
@@ -25,10 +31,10 @@ export function drawHUD(g, game, W, H, opts = {}) {
   // damage/boost vignette
   if (game.hudFlash > 0) { game.hudFlash -= 0.016; }
   const hpf = car.hp / car.maxHp;
-  if (hpf < 0.3 && !car.dead) { const gr = g.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.85); gr.addColorStop(0, 'rgba(180,0,0,0)'); gr.addColorStop(1, `rgba(180,0,0,${0.35 + Math.sin(game.time * 6) * 0.1})`); g.fillStyle = gr; g.fillRect(0, 0, W, H); }
-  if (car.nitroOn || car.boostT > 0) { const gr = g.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.9); gr.addColorStop(0, 'rgba(60,160,255,0)'); gr.addColorStop(1, 'rgba(60,160,255,0.28)'); g.fillStyle = gr; g.fillRect(0, 0, W, H); }
+  if (hpf < 0.3 && !car.dead) { g.globalAlpha = 0.8 + Math.sin(game.time * 6) * 0.2; g.drawImage(edgeGlow('180,0,0', 0.42, 0.3), 0, 0, W, H); g.globalAlpha = 1; }
+  if (car.nitroOn || car.boostT > 0) g.drawImage(edgeGlow('60,160,255', 0.28, 0.35), 0, 0, W, H);
   // speed lines for nitro
-  if (car.nitroOn) { g.strokeStyle = 'rgba(180,220,255,0.25)'; g.lineWidth = 2; for (let i = 0; i < 14; i++) { const a = (i / 14) * TAU + game.time * 0.2, r0 = H * 0.42, r1 = H * 0.6 + Math.random() * 40; g.beginPath(); g.moveTo(W / 2 + Math.cos(a) * r0, H / 2 + Math.sin(a) * r0); g.lineTo(W / 2 + Math.cos(a) * r1, H / 2 + Math.sin(a) * r1); g.stroke(); } }
+  if (car.nitroOn) { g.strokeStyle = 'rgba(180,220,255,0.25)'; g.lineWidth = 2; g.beginPath(); for (let i = 0; i < 14; i++) { const a = (i / 14) * TAU + game.time * 0.2, r0 = H * 0.42, r1 = H * 0.6 + Math.random() * 40; g.moveTo(W / 2 + Math.cos(a) * r0, H / 2 + Math.sin(a) * r0); g.lineTo(W / 2 + Math.cos(a) * r1, H / 2 + Math.sin(a) * r1); } g.stroke(); }
 
   // ---- position / lap / times (top-left)
   const lapT = game.state === 'racing' ? game.raceTime - car.lapStart : 0;

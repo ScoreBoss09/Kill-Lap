@@ -24,21 +24,28 @@ function noisePattern(ctx, kind) {
 
 export class Ground {
   constructor(T, quality = 2) {
-    this.T = T; this.q = quality; this.tiles = new Map(); this.queue = [];
+    this.T = T; this.q = quality; this.tiles = new Map(); this.queue = []; this.pend = new Map();
+    this.res = quality >= 1 ? 1 : 0.5; // low quality bakes the terrain at half resolution (4x less memory and fill)
+    this.maxTiles = quality >= 1 ? 72 : 160; this.cx = 0; this.cy = 0; // cap on baked tiles kept in (GPU) memory
     this.cols = Math.ceil(T.W / TS); this.rows = Math.ceil(T.H / TS);
     this.px = null;
   }
   key(tx, ty) { return tx + ty * 1000; }
+  /** drop the baked tiles farthest from the camera */
+  evict() {
+    const arr = [...this.tiles.keys()].map(k => { const tx = k % 1000, ty = Math.floor(k / 1000); return [k, Math.hypot((tx + 0.5) * TS - this.cx, (ty + 0.5) * TS - this.cy)]; }).sort((a, b) => b[1] - a[1]);
+    for (let i = 0; i < arr.length && this.tiles.size > this.maxTiles - 8; i++) if (arr[i][1] > 2200) { this.tiles.delete(arr[i][0]); this.pend.delete(arr[i][0]); }
+  }
   has(tx, ty) { return this.tiles.has(this.key(tx, ty)); }
   /** returns tile canvas, baking it if needed */
   tile(tx, ty) {
     const k = this.key(tx, ty); let t = this.tiles.get(k);
-    if (!t) { t = document.createElement('canvas'); t.width = t.height = TS; this.bake(t, tx * TS, ty * TS); this.tiles.set(k, t); }
+    if (!t) { t = document.createElement('canvas'); t.width = t.height = Math.round(TS * this.res); this.bake(t, tx * TS, ty * TS); this.tiles.set(k, t); if (this.tiles.size > this.maxTiles) this.evict(); }
     return t;
   }
   /** background baking: tiles along the track first (from the start line), then the rest; stops after `budgetMs` */
   prebake(budgetMs) {
-    if (this.allBaked) return; const T = this.T;
+    if (this.allBaked || this.tiles.size >= this.maxTiles - 10) return; const T = this.T;
     if (!this.order) { const seen = new Set(), o = []; const addT = (tx, ty) => { if (tx < 0 || ty < 0 || tx >= this.cols || ty >= this.rows) return; const k = this.key(tx, ty); if (!seen.has(k)) { seen.add(k); o.push([tx, ty]); } };
       for (let i = 0; i < T.N; i += 6) { const tx = Math.floor(T.x[i] / TS), ty = Math.floor(T.y[i] / TS); for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) addT(tx + a, ty + b); }
       for (let ty = 0; ty < this.rows; ty++) for (let tx = 0; tx < this.cols; tx++) addT(tx, ty); this.order = o; this.oi = 0; }
@@ -54,7 +61,7 @@ export class Ground {
     return true;
   }
   draw(ctx, camX, camY, zoom, W, H) {
-    const vw = W / zoom, vh = H / zoom, x0 = camX - vw / 2, y0 = camY - vh / 2;
+    const vw = W / zoom, vh = H / zoom, x0 = camX - vw / 2, y0 = camY - vh / 2; this.cx = camX; this.cy = camY;
     const tx0 = Math.max(0, Math.floor(x0 / TS)), tx1 = Math.min(this.cols - 1, Math.floor((x0 + vw) / TS)), ty0 = Math.max(0, Math.floor(y0 / TS)), ty1 = Math.min(this.rows - 1, Math.floor((y0 + vh) / TS));
     const th = this.T.th; ctx.fillStyle = th.ground2; ctx.fillRect(0, 0, W, H);
     const sz = Math.ceil(TS * zoom) + 1;
@@ -65,19 +72,29 @@ export class Ground {
   }
 
   /* ---- decals ---- */
+  /** skid marks are queued and painted into the terrain a few times a second in one batched stroke per tile
+   *  (painting into a tile every physics step forces the GPU to re-upload it, which was a big slowdown) */
   line(x0, y0, x1, y1, width, color, alpha) {
     const minx = Math.min(x0, x1) - width, maxx = Math.max(x0, x1) + width, miny = Math.min(y0, y1) - width, maxy = Math.max(y0, y1) + width;
     for (let ty = Math.floor(miny / TS); ty <= Math.floor(maxy / TS); ty++) for (let tx = Math.floor(minx / TS); tx <= Math.floor(maxx / TS); tx++) {
-      const t = this.tiles.get(this.key(tx, ty)); if (!t) continue;
-      const g = t.getContext('2d'); g.globalAlpha = alpha; g.strokeStyle = color; g.lineWidth = width; g.lineCap = 'round';
-      g.beginPath(); g.moveTo(x0 - tx * TS, y0 - ty * TS); g.lineTo(x1 - tx * TS, y1 - ty * TS); g.stroke(); g.globalAlpha = 1;
+      const k = this.key(tx, ty); if (!this.tiles.has(k)) continue;
+      let p = this.pend.get(k); if (!p) this.pend.set(k, p = new Map()); const sk = color + '|' + width + '|' + (Math.round(alpha * 10) / 10);
+      let l = p.get(sk); if (!l) p.set(sk, l = []); l.push(x0 - tx * TS, y0 - ty * TS, x1 - tx * TS, y1 - ty * TS);
     }
+  }
+  flush() {
+    for (const [k, p] of this.pend) {
+      const t = this.tiles.get(k); if (!t) continue; const g = t.getContext('2d'); g.lineCap = 'round';
+      for (const [sk, l] of p) { const [color, width, alpha] = sk.split('|'); g.globalAlpha = +alpha; g.strokeStyle = color; g.lineWidth = +width * this.res; g.beginPath(); for (let i = 0; i < l.length; i += 4) { g.moveTo(l[i] * this.res, l[i + 1] * this.res); g.lineTo(l[i + 2] * this.res, l[i + 3] * this.res); } g.stroke(); }
+      g.globalAlpha = 1;
+    }
+    this.pend.clear();
   }
   blot(x, y, r, color, alpha) {
     for (let ty = Math.floor((y - r) / TS); ty <= Math.floor((y + r) / TS); ty++) for (let tx = Math.floor((x - r) / TS); tx <= Math.floor((x + r) / TS); tx++) {
       const t = this.tiles.get(this.key(tx, ty)); if (!t) continue;
-      const g = t.getContext('2d'); const gr = g.createRadialGradient(x - tx * TS, y - ty * TS, 0, x - tx * TS, y - ty * TS, r);
-      gr.addColorStop(0, rgba(color, alpha)); gr.addColorStop(1, rgba(color, 0)); g.fillStyle = gr; g.beginPath(); g.arc(x - tx * TS, y - ty * TS, r, 0, TAU); g.fill();
+      const g = t.getContext('2d'); g.setTransform(this.res, 0, 0, this.res, 0, 0); const gr = g.createRadialGradient(x - tx * TS, y - ty * TS, 0, x - tx * TS, y - ty * TS, r);
+      gr.addColorStop(0, rgba(color, alpha)); gr.addColorStop(1, rgba(color, 0)); g.fillStyle = gr; g.beginPath(); g.arc(x - tx * TS, y - ty * TS, r, 0, TAU); g.fill(); g.setTransform(1, 0, 0, 1, 0, 0);
     }
   }
 
@@ -118,7 +135,7 @@ export class Ground {
   }
   bake(cv, ox, oy) {
     const T = this.T, th = T.th, g = cv.getContext('2d'), N = T.N, q = this.q;
-    g.save(); g.translate(-ox, -oy);
+    g.save(); g.scale(this.res, this.res); g.translate(-ox, -oy);
     g.beginPath(); g.rect(ox, oy, TS, TS); g.clip();
     // base + noise
     g.fillStyle = th.ground; g.fillRect(ox, oy, TS, TS);
@@ -173,10 +190,17 @@ export class Ground {
     }
     // edge lines
     g.lineJoin = 'round'; g.strokeStyle = th.line; g.globalAlpha = 0.85; g.lineWidth = 4; g.beginPath(); this.edge(g, 1, -9); this.edge(g, -1, -9); g.stroke(); g.globalAlpha = 1;
+    if (T.data.lanes) { // two-way road: double yellow centre line, dashed lane dividers each side
+      g.strokeStyle = '#f2c500'; g.globalAlpha = 0.85; g.lineWidth = 3; g.beginPath(); this.edgeFrac(g, 0.025); this.edgeFrac(g, -0.025); g.stroke();
+      g.strokeStyle = th.line; g.globalAlpha = 0.6; g.lineWidth = 3; g.beginPath();
+      for (const fr of [-0.5, 0.5]) for (let i = 0; i < N; i += 4) { const j = (i + 2) % N; if (T.elev[i] || T.elev[j]) continue; const a = this.pt(i, fr * T.hw[i]), b = this.pt(j, fr * T.hw[j]); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); }
+      g.stroke(); g.globalAlpha = 1;
+    } else {
     // centre dashes
     g.strokeStyle = th.line; g.globalAlpha = 0.5; g.lineWidth = 3; g.beginPath();
     for (let i = 0; i < N; i += 4) { const j = (i + 1) % N, k = (i + 2) % N; if (T.elev[i] || T.elev[j] || T.elev[k]) continue; g.moveTo(T.x[i], T.y[i]); g.lineTo(T.x[j], T.y[j]); g.lineTo(T.x[k], T.y[k]); }
     g.stroke(); g.globalAlpha = 1;
+    }
     // start / finish
     const hw0 = T.hw[0], sq = 14, nx = -T.ty[0], ny = T.tx[0], tx = T.tx[0], ty = T.ty[0];
     if (Math.abs(T.x[0] - ox - TS / 2) < TS / 2 + hw0 + 30 && Math.abs(T.y[0] - oy - TS / 2) < TS / 2 + hw0 + 30) {

@@ -17,12 +17,14 @@ import { UPGRADES } from './cars.js';
 import { avatarCell } from './ui.js';
 import { fmtTime, fmtMoney, clamp, hashStr, mulberry32 } from './util.js';
 
-const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
+const canvas = document.getElementById('game'), ctx = canvas.getContext('2d', { alpha: false }); // opaque canvas: cheaper to composite
 let W = 0, H = 0;
 let resScale = 1, lowFps = 0; // adaptive resolution: only ever lowered, never saved
 function resize() {
   const q = Store.s.quality, scale = ([0.7, 0.85, 1][q] ?? 1) * resScale, dpr = Math.min(window.devicePixelRatio || 1, 1.5) * scale;
   W = Math.max(320, Math.floor(window.innerWidth * dpr)); H = Math.max(240, Math.floor(window.innerHeight * dpr));
+  // cap the internal resolution: big / high-DPI screens otherwise render up to 4K internally, which no setting could save
+  const cap = ([0.92e6, 1.6e6, 2.4e6][q] ?? 2.4e6) * resScale * resScale; if (W * H > cap) { const k = Math.sqrt(cap / (W * H)); W = Math.floor(W * k); H = Math.floor(H * k); }
   if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
 }
 window.addEventListener('resize', resize);
@@ -174,6 +176,7 @@ const app = {
     if (this.game) { this.game.quiet = true; this.game.destroy(); } // no engine drone behind the results screen
     this.state = 'results'; UI.render('results', { results: rows, notes, extra, buttons, track: T.name, title: tt ? 'TIME TRIAL COMPLETE' : undefined });
     UI.stack = [];
+    if (this.pendingFinale) { const f = this.pendingFinale; this.pendingFinale = null; setTimeout(() => UI.finale(f), 600); }
   },
 
 
@@ -191,6 +194,7 @@ const app = {
       notes.push({ text: pos === 1 ? `🏆 YOU WON THE ${s.name.toUpperCase()}!  Bonus ${fmtMoney(bonusC)}` : `Series finished: P${pos}${bonusC ? '  Bonus ' + fmtMoney(bonusC) : ''}`, cls: 'gold' });
       const unlocks = Object.entries(UPGRADES).filter(([k, u]) => u.need === s.id).map(([k, u]) => u.name); if (unlocks.length) notes.push({ text: '🔓 New equipment in the garage: ' + unlocks.join(', '), cls: 'gold' });
       const nxt = SERIES.find(x => x.need === s.id); if (nxt) notes.push({ text: '🔓 Unlocked series: ' + nxt.name, cls: 'gold' });
+      this.pendingFinale = { series: s.name, pos, of: standings.length, standings, me: d.name, bonus: bonusC, unlocks: [...(unlocks.length ? ['New equipment: ' + unlocks.join(', ')] : []), ...(nxt ? ['Unlocked series: ' + nxt.name] : [])] };
     } else nextBtn = { t: 'NEXT RACE ▶', cls: 'primary', fn: () => this.startRace({ mode: 'race', track: findTrack(s.tracks[a.race]), laps: s.laps, opp: 7, diff: s.diff, weapons: true, carId: d.car, roster: a.roster, career: { id: s.id, idx: a.race } }) };
     return { notes, extra, nextBtn };
   },
@@ -244,7 +248,7 @@ function loop(now) {
   fpsAcc += dt; fpsN++;
   if (fpsAcc >= 0.5) {
     app.fps = Math.round(fpsN / fpsAcc); fpsAcc = 0; fpsN = 0;
-    if (app.state === 'race' && !app.paused && document.hasFocus()) { lowFps = app.fps < 30 ? lowFps + 1 : 0; if (lowFps >= 8 && resScale > 0.56) { resScale = Math.max(0.55, resScale - 0.15); lowFps = 0; resize(); UI.toast('Low frame rate - lowering render resolution', ''); } } else lowFps = 0;
+    if (app.state === 'race' && !app.paused && document.hasFocus()) { lowFps = app.fps < 40 ? lowFps + 1 : 0; if (lowFps >= 6 && resScale > 0.56) { resScale = Math.max(0.55, resScale - 0.15); lowFps = 0; resize(); UI.toast('Low frame rate - lowering render resolution', ''); } } else lowFps = 0;
   }
   Input.update(dt);
   try {

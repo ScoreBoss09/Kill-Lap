@@ -99,6 +99,22 @@ UI.modal = function (title, content, buttons = [{ t: 'Close', fn: null }], opts 
   const el = h('div', { class: 'modal-wrap' }, h('div', { class: 'modal ' + (opts.cls || '') }, h('h2', null, title), h('div', { class: 'modal-body' }, content), h('div', { class: 'row end' }, buttons.map(b => h('button', { class: 'btn nv' + (b.primary ? ' primary' : ''), onclick: () => { if (b.fn && b.fn() === false) return; this.closeModal(); } }, b.t)))));
   document.getElementById('modals').append(el); this.modals.push({ el, onClose: opts.onClose }); this.focusFirst(); Audio.sfx('select'); return el;
 };
+/** end-of-series celebration (or commiseration): big full-screen card with the final championship position */
+UI.finale = function (f) {
+  const podium = f.pos <= 3, won = f.pos === 1, medal = ['🏆', '🥈', '🥉'][f.pos - 1] || '💀';
+  const head = won ? 'CHAMPION!' : podium ? 'CONGRATULATIONS!' : 'SERIES FAILED';
+  const sub = won ? `You won the ${f.series}` : podium ? `You finished P${f.pos} of ${f.of} in the ${f.series}` : `You finished P${f.pos} of ${f.of} in the ${f.series} - only the top 3 make the podium. Try again!`;
+  const conf = podium ? h('div', { class: 'confetti' }, Array.from({ length: 60 }, (_, i) => h('i', { style: `left:${(i * 37) % 100}%;animation-delay:${(i % 12) * 0.12}s;background:${['#ffd23a', '#ff4d6d', '#3ab8ff', '#46d16a', '#fff'][i % 5]}` }))) : null;
+  const idx = f.standings.map((s, i) => i).filter(i => i < 4 || f.standings[i][0] === f.me); const rows = idx.map(i => { const [n, p] = f.standings[i]; return h('tr', { class: n === f.me ? 'me' : '' }, h('td', null, MEDAL[i] || i + 1), h('td', null, avatarCell(n)), h('td', null, p)); });
+  const el = h('div', { class: 'modal-wrap finale ' + (podium ? 'good' : 'bad') }, conf,
+    h('div', { class: 'modal finale-card' }, h('div', { class: 'f-medal' }, medal), h('h1', { class: 'f-head' }, head), h('div', { class: 'f-sub' }, sub),
+      h('div', { class: 'f-place' }, h('span', null, 'FINAL POSITION'), h('b', null, `P${f.pos}`), h('span', null, `of ${f.of}`)),
+      f.bonus ? h('div', { class: 'f-line gold' }, 'Prize money: ' + fmtMoney(f.bonus)) : null,
+      ...(f.unlocks || []).map(t => h('div', { class: 'f-line gold' }, '🔓 ' + t)),
+      h('table', { class: 'tbl' }, h('tr', null, h('th', null, '#'), h('th', null, 'Driver'), h('th', null, 'Pts')), rows),
+      h('div', { class: 'row end' }, h('button', { class: 'btn nv primary', onclick: () => this.closeModal() }, 'CONTINUE'))));
+  document.getElementById('modals').append(el); this.modals.push({ el }); this.focusFirst(); Audio.sfx(podium ? 'win' : 'lose');
+};
 UI.closeModal = function () { const m = this.modals.pop(); if (m) { m.el.remove(); m.onClose && m.onClose(); this.focusFirst(); Audio.sfx('back'); } };
 UI.clearModals = function () { while (this.modals.length) this.modals.pop().el.remove(); };
 UI.toast = function (text, kind = '') {
@@ -203,22 +219,29 @@ const S = UI.screens;
 const careerLine = d => { const a = d.career.active; if (!a) return null; const sr = SERIES.find(x => x.id === a.id), st = standingOf(a, d.name); return h('div', { class: 'careerline' }, '🏁 ' + sr.name, h('br'), `Overall: P${st.pos} of ${st.of} · ${st.pts} pts · race ${a.race}/${sr.tracks.length}`); };
 S.title = (ctx) => {
   const d = Store.d, items = [
-    ['QUICK RACE', () => UI.go('setup', { mode: 'race' })],
-    ['CAREER', () => UI.go('career')],
-    ['MULTIPLAYER', () => UI.go('mp')],
-    ['TIME TRIAL', () => UI.go('setup', { mode: 'tt' })],
-    ['DAILY CHALLENGE', () => UI.app.startDaily()],
-    ['GARAGE', () => UI.go('garage')],
-    ['MAP EDITOR', () => UI.app.openEditor()],
-    ['LEADERBOARDS', () => UI.go('boards')],
-    ['SETTINGS', () => UI.go('settings')],
+    ['🏁', 'QUICK RACE', 'Pick a map and race the bots', () => UI.go('setup', { mode: 'race' })],
+    ['🏆', 'CAREER', d.career.active ? 'Continue your championship' : 'Win series, earn gear', () => UI.go('career')],
+    ['🌐', 'MULTIPLAYER', 'Race friends online', () => UI.go('mp')],
+    ['⏱', 'TIME TRIAL', 'Chase your ghost', () => UI.go('setup', { mode: 'tt' })],
+    ['📅', 'DAILY CHALLENGE', 'A new map every day', () => UI.app.startDaily()],
+    ['🔧', 'GARAGE', 'Cars, upgrades, paint', () => UI.go('garage')],
+    ['🗺', 'MAP EDITOR', 'Build your own track', () => UI.app.openEditor()],
+    ['📊', 'LEADERBOARDS', 'Fastest laps worldwide', () => UI.go('boards')],
+    ['⚙', 'SETTINGS', 'Sound, graphics, controls', () => UI.go('settings')],
   ];
+  const mbtn = ([ic, t, sub, fn]) => h('button', { class: 'btn nv big mbtn', onclick: fn }, h('span', { class: 'mi' }, ic), h('span', { class: 'ml' }, t, h('small', null, sub)));
+  // featured cards: carry on with the career, try the new traffic maps
+  const feat = [];
+  const a = d.career.active; if (a) { const sr = SERIES.find(x => x.id === a.id), st = standingOf(a, d.name), t = findTrack(sr.tracks[Math.min(a.race, sr.tracks.length - 1)]);
+    feat.push(h('button', { class: 'feat nv', onclick: () => UI.go('series', { id: a.id }) }, trackThumb(t, 64), h('div', null, h('b', null, 'CONTINUE CAREER'), h('div', { class: 'small' }, `${sr.name} · race ${a.race + 1}/${sr.tracks.length}`), h('div', { class: 'small' }, `You are P${st.pos} of ${st.of}`)))); }
+  for (const id of ['motorway', 'rushhour']) { const t = findTrack(id); if (t) feat.push(h('button', { class: 'feat nv', onclick: () => UI.go('setup', { mode: 'race', track: id }) }, trackThumb(t, 64), h('div', null, h('b', null, 'NEW: ' + t.name.toUpperCase()), h('div', { class: 'small' }, id === 'motorway' ? 'Dodge motorway traffic & crossroads' : 'City streets at rush hour')))); }
   const el = h('div', { class: 'title-screen' },
     h('div', { class: 'logo' }, h('div', { class: 'logo-top' }, 'TOP-DOWN VEHICULAR COMBAT RACING'), h('div', { class: 'logo-main', 'data-t': 'KILL LAP' }, 'KILL LAP'), h('div', { class: 'logo-sub' }, 'DRIVE FAST · SHOOT FIRST · FINISH FIRST')),
-    h('div', { class: 'menu' }, items.map(([t, fn]) => btn(t, fn, 'big'))),
+    h('div', { class: 'menu' }, items.map(mbtn)),
     h('div', { class: 'side' },
-      h('div', { class: 'panel' }, h('div', { class: 'pname' }, d.name), h('div', { class: 'pcash' }, fmtMoney(d.cash)), h('div', { class: 'small' }, `${d.stats.races} races · ${d.stats.wins} wins · ${d.stats.kills} kills`), careerLine(d)),
-      btn('🏆 ACHIEVEMENTS', () => UI.go('achievements'), 'ghost'), btn('🎮 CONTROLS', () => UI.go('controls'), 'ghost'), btn('ℹ CREDITS', () => UI.go('credits'), 'ghost')),
+      h('div', { class: 'panel profile' }, h('div', { class: 'pname' }, d.name), h('div', { class: 'pcash' }, fmtMoney(d.cash)), h('div', { class: 'small' }, `${d.stats.races} races · ${d.stats.wins} wins · ${d.stats.kills} kills`), careerLine(d)),
+      ...feat,
+      h('div', { class: 'row' }, btn('🏆', () => UI.go('achievements'), 'ghost mini'), btn('🎮', () => UI.go('controls'), 'ghost mini'), btn('ℹ', () => UI.go('credits'), 'ghost mini'))),
     h('div', { class: 'build-tag' }, 'build ' + BUILD + (d.freshBuild ? ' · new build - progress reset' : '')),
     hint());
   return el;
@@ -227,7 +250,7 @@ S.title = (ctx) => {
 /* ---- race setup */
 S.setup = (ctx, p) => {
   const mode = p.mode, tt = mode === 'tt'; const d = Store.d;
-  const cfg = ctx.cfg = Object.assign({ track: findTrack(d.lastTrack) || BUILTIN_TRACKS[0], laps: 3, opp: 5, diff: 1, weapons: true }, p.cfg || {});
+  const cfg = ctx.cfg = Object.assign({ track: (p.track && findTrack(p.track)) || findTrack(d.lastTrack) || BUILTIN_TRACKS[0], laps: 3, opp: 5, diff: 1, weapons: true }, p.cfg || {});
   const info = h('div', { class: 'tinfo' });
   const refresh = () => {
     info.innerHTML = ''; const t = cfg.track; const rec = d.records[t.id] || {};

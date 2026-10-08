@@ -1,6 +1,6 @@
 // Road structures drawn as real (perspective-projected) 3D geometry: barriers, raised decks, pillars, tunnels.
 import { shade, rgba, clamp, TAU } from './util.js';
-import { box } from './sprites.js';
+import { box, View } from './sprites.js';
 import Tex from './textures.js';
 
 export const WALL_H = 15, DECK_T = 12, TUN_H = 84;
@@ -61,7 +61,7 @@ export function drawDecks(g, v, T, vis) {
   for (const i of vis) { const j = (i + 1) % N; if (T.elev[i] || T.elev[j]) segs.push(i); }
   if (!segs.length) return;
   const conc = shade(th.wall, -0.1), concTop = shade(th.wallTop, 0.05);
-  const pats = { rock: Tex.world(v, 'rock', T.theme), road: Tex.world(v, 'road', T.theme), wall: Tex.world(v, 'wall', T.theme), ground: Tex.world(v, 'ground', T.theme) };
+  const tx = v.quality > 0, pats = tx ? { rock: Tex.world(v, 'rock', T.theme), road: Tex.world(v, 'road', T.theme), wall: Tex.world(v, 'wall', T.theme), ground: Tex.world(v, 'ground', T.theme) } : {}; // lowest quality: flat colours
   for (const i of segs) if (i % 6 === 0 && T.z[i] >= 18 && T.z[i] < 60 && Math.abs(T.tilt[i]) < 10) for (const s of [-0.55, 0.55]) { const [x, y] = pt(T, i, s * T.hw[i]); box(g, v, x, y, 15, 20, T.z[i] - DECK_T, T.ang[i], conc, concTop); }
   const zs = i => Math.max(T.z[i], T.z[(i + 1) % N]);
   segs.sort((a, b) => zs(a) - zs(b) || a - b);
@@ -128,7 +128,7 @@ export function tunnelRuns(T) {
 export function drawTunnels(g, v, T, vis, focus = -1) {
   const runs = tunnelRuns(T); if (!runs.length) return; const th = T.th, N = T.N, near = new Set(vis);
   const rock = [shade(th.wall, -0.2), shade(th.wall, -0.27), shade(th.wall, -0.14), shade(th.wall, -0.23)];
-  const rockP = Tex.world(v, 'rock', T.theme), grdP = Tex.world(v, 'ground', T.theme), grassy = ['forest', 'snow', 'coast', 'desert', 'warzone'].includes(T.theme); g.save();
+  const rockP = v.quality > 0 ? Tex.world(v, 'rock', T.theme) : null, grdP = v.quality > 0 ? Tex.world(v, 'ground', T.theme) : null, grassy = ['forest', 'snow', 'coast', 'desert', 'warzone'].includes(T.theme); g.save();
   for (const idx of runs) {
     // the hill turns see-through while you are inside it, so the road and every car underneath stay visible
     let runA = 0.94; if (focus >= 0 && idx.some(q => Math.min(Math.abs(q - focus), N - Math.abs(q - focus)) < 20)) runA = 0.34; g.globalAlpha = runA;
@@ -160,4 +160,22 @@ export function drawTunnels(g, v, T, vis, focus = -1) {
     }
   }
   g.restore();
+}
+
+/** A cached screen-space layer for static 3D structures (barriers, flyovers, tunnel hills). It is redrawn only when the
+ *  camera has moved far enough for the perspective lean to visibly change (or zoom/state changes); in between it is
+ *  blitted with an offset. This turns a few thousand path operations per frame into one drawImage most frames. */
+export class LayerCache {
+  constructor(thresh = 26) { this.cv = document.createElement('canvas'); this.g = this.cv.getContext('2d'); this.thresh = thresh; this.valid = false; this.vc = new View(); }
+  draw(g, v, key, render) {
+    const m = 0.14, cw = Math.ceil(v.W * (1 + 2 * m)), ch = Math.ceil(v.H * (1 + 2 * m));
+    const moved = Math.hypot(v.x - this.x, v.y - this.y) * v.zoom;
+    if (!this.valid || this.cv.width !== cw || this.cv.height !== ch || Math.abs(v.zoom - this.zoom) / v.zoom > 0.012 || moved > this.thresh || key !== this.key) {
+      if (this.cv.width !== cw || this.cv.height !== ch) { this.cv.width = cw; this.cv.height = ch; } else this.g.clearRect(0, 0, cw, ch);
+      const vc = this.vc; Object.assign(vc, { x: v.x, y: v.y, zoom: v.zoom, W: cw, H: ch, shakeX: 0, shakeY: 0, t: v.t, quality: v.quality });
+      render(this.g, vc); this.x = v.x; this.y = v.y; this.zoom = v.zoom; this.key = key; this.valid = true;
+    }
+    const dx = (this.x - v.x) * v.zoom + v.W / 2 + v.shakeX - cw / 2, dy = (this.y - v.y) * v.zoom + v.H / 2 + v.shakeY - ch / 2;
+    g.drawImage(this.cv, Math.round(dx), Math.round(dy));
+  }
 }

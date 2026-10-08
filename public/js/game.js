@@ -2,7 +2,9 @@
 import { clamp, angDiff, lerp, TAU, mulberry32, rgba, hashStr } from './util.js';
 import { compileTrack, nearest, pointAt, VERGE, ELEV_T } from './tracks.js';
 import { Hazards } from './hazards.js';
-import { makeVis, drawWalls, drawDecks, drawDeckShadows, drawTunnels } from './structures.js';
+import { Peds } from './peds.js';
+import { Traffic } from './traffic.js';
+import { makeVis, drawWalls, drawDecks, drawDeckShadows, drawTunnels, LayerCache } from './structures.js';
 import { carStats, CAR_BY_ID, WEAPONS, DIFFICULTIES, AI_NAMES } from './cars.js';
 import { Ground, gridPos, makeMinimap } from './ground.js';
 import { View, drawProp, drawProp2Glow, drawItem, drawCar, drawProjectile, drawMine, Particles, glow } from './sprites.js';
@@ -28,7 +30,9 @@ function buildLayerInfo(T) {
   if (T.hasTun) for (let i = 0; i < N; i++) if (T.tn[i]) { let d = 0; while (d < 60 && T.tn[(i + d) % N] && T.tn[(i - d + N) % N]) d++; tnDepth[i] = d; }
   const cell = 128, grid = new Map(); for (let i = 0; i < N; i++) if (T.z[i] >= 30) { const k = Math.floor(T.x[i] / cell) + ',' + Math.floor(T.y[i] / cell); (grid.get(k) || grid.set(k, []).get(k)).push(i); }
   const underDeck = (x, y) => { const cx = Math.floor(x / cell), cy = Math.floor(y / cell); for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const l = grid.get((cx + a) + ',' + (cy + b)); if (l) for (const i of l) if (Math.hypot(T.x[i] - x, T.y[i] - y) < T.hw[i] + T.wl[i] + 8) return true; } return false; };
-  return { elevNear, tnNear, tnDepth, underDeck };
+  const runId = new Int16Array(N).fill(-1); { let r = -1; for (let i = 0; i < N; i++) if (T.tn[i] && !T.tn[(i - 1 + N) % N]) { r++; for (let k = i; T.tn[k % N] && k < i + N; k++) runId[k % N] = r; } }
+  const runOf = f => { for (let d = 0; d < 24; d++) { if (runId[(f + d) % N] >= 0) return runId[(f + d) % N]; if (runId[(f - d + N) % N] >= 0) return runId[(f - d + N) % N]; } return -1; };
+  return { elevNear, tnNear, tnDepth, underDeck, runOf };
 }
 
 export class Game {
@@ -52,6 +56,8 @@ export class Game {
     this.night = this.T.th.night; this.hudFlash = 0; this.ghost = opts.ghost || null; this.ghostRec = []; this.ghostRecT = 0; this.bestGhost = null;
     this.sortedProps = this.T.props.slice().sort((a, b) => a.y - b.y);
     this.hazards = (this.T.hazards.length || this.T.bomber) ? new Hazards(this) : null; this.warn = null;
+    this.peds = new Peds(this);
+    this.traffic = new Traffic(this); if (!this.traffic.active) this.traffic = null;
     this.stats = { kills: 0, deaths: 0, cash: 0, topSpeed: 0, dmgDealt: 0, pickups: 0, cleanLaps: 0 };
     (opts.roster || []).forEach((r, i) => this.addCar(r, i));
     this.human = this.cars.find(c => c.human) || null; this.camTarget = this.human || this.cars[0];
@@ -119,6 +125,8 @@ export class Game {
       if (c.human && drive && drive.reset && racing) { c.resetHold += dt; if (c.resetHold > 0.8) { c.resetHold = 0; this.respawn(c, true); } } else c.resetHold = 0;
     }
     if (this.hazards && racing) this.hazards.update(dt);
+    if (this.peds) this.peds.update(dt);
+    if (this.traffic) this.traffic.update(dt);
     this.collideAll(dt);
     if (this.weapons) { this.stepProjectiles(dt); this.stepMines(dt); }
     for (const it of this.items) if (!it.active && (it.respawn -= dt) <= 0) it.active = true;
@@ -500,6 +508,7 @@ export class Game {
             if (Math.abs(lx) < c.len * 0.52 && Math.abs(ly) < c.wid * 0.6) { hit = c; dead = true; break; }
           }
         }
+        if (!dead && this.traffic && this.traffic.shot(p.x, p.y, (p.z || 9) - 9, p.type === 'rocket' || p.type === 'homing' ? 200 : p.type === 'cluster' || p.type === 'bomblet' ? 120 : 12, this.byId[p.owner])) dead = true;
         if (!dead) { const nr = nearest(T, p.x, p.y, p.idx, 8); p.idx = nr.f; if (Math.abs(nr.lat) > nr.hw + nr.wl && Math.abs(nr.z - ((p.z || 9) - 9)) < 30) { dead = true; p.wall = true; } }
       }
       // rear guard: shoots down incoming missiles that approach from behind
@@ -575,6 +584,7 @@ export class Game {
     // car avoidance
     let avoid = 0;
     for (const o of this.cars) { if (o === c || o.dead) continue; const dx = o.x - c.x, dy = o.y - c.y, d2 = dx * dx + dy * dy; if (d2 > 170 * 170) continue; const cs = Math.cos(c.a), sn = Math.sin(c.a), lx = dx * cs + dy * sn, ly = -dx * sn + dy * cs; if (lx > 0 && lx < 150 && Math.abs(ly) < 38) avoid += ly > 0 ? -1 : 1; }
+    if (this.traffic) avoid += this.traffic.avoid(c);
     const tgtHW = T.hw[((fi % N) + N) % N];
     const tgt = pointAt(T, f + la, clamp(lane + avoid * 0.35, -0.8, 0.8) * tgtHW * 0.85);
     const want = Math.atan2(tgt.y - c.y, tgt.x - c.x), err = angDiff(c.a, want);
@@ -661,15 +671,21 @@ export class Game {
   updateAudio(dt) {
     if (!Audio.ready || this.mode === 'attract' || this.silenced) return;
     let skid = 0; const target = this.quiet ? 0 : 1; this.engVol = this.engVol == null ? 1 : this.engVol + (target - this.engVol) * Math.min(1, dt * 3); // engines fade out once the race is over
+    // only the nearest few cars get an engine voice, and parameters are refreshed ~20 times a second (not every frame)
+    this.audT = (this.audT || 0) + dt; const tick = this.audT >= 0.05; if (tick) this.audT = 0;
+    const MAXV = 5, ranked = this.cars.filter(c => !c.dead).map(c => [c, Math.hypot(c.x - this.cam.x, c.y - this.cam.y)]).sort((a, b) => a[1] - b[1]);
+    const rank = new Map(ranked.map(([c, d], i) => [c, d < 1300 ? i : 99]));
     for (const c of this.cars) {
-      if (c.dead || this.engVol < 0.01) { if (c.voice) c.voice.update(0, 0, 0, 0); continue; }
-      if (!c.voice) c.voice = Audio.engine();
-      if (!c.voice) continue;
+      const r = rank.has(c) ? rank.get(c) : 99; // hysteresis: a voice starts in the top 5 and is only dropped past the top 7
+      if (r > MAXV + 1 || this.engVol < 0.01) { if (c.voice) { c.voice.stop(); c.voice = null; } continue; }
+      if (!c.voice && r < MAXV) c.voice = Audio.engine();
+      if (!c.voice || !tick) continue;
       const dx = c.x - this.cam.x, dy = c.y - this.cam.y, d = Math.hypot(dx, dy), vol = clamp(1 - d / 1300, 0, 1) * (c.human ? 1.2 : 0.8) * this.engVol;
       const sp = Math.hypot(c.vx, c.vy) / c.stats.top;
       c.voice.update(clamp(sp, 0, 1.1), c.input.throttle > 0.1 || (c.remote && sp > 0.2), vol * vol, clamp(dx / 700, -0.9, 0.9), c.nitroOn);
       if (c.slip > 95 && c.surface === 'road') skid = Math.max(skid, (c.slip - 80) / 220 * vol);
     }
+    if (!tick) return;
     Audio.setSkid(skid * this.engVol);
   }
   destroy() { this.silenced = true; for (const c of this.cars) if (c.voice) { c.voice.stop(); c.voice = null; } Audio.setSkid(0); }
@@ -694,7 +710,8 @@ export class Game {
     // bake terrain around the view (budgeted)
     { const lx = tg.vx * 0.9, ly = tg.vy * 0.9; // look ahead in the direction of travel so new terrain is ready before it scrolls in
       this.ground.ensure(v.x - vw / 2 - 64 + Math.min(0, lx), v.y - vh / 2 - 64 + Math.min(0, ly), v.x + vw / 2 + 64 + Math.max(0, lx), v.y + vh / 2 + 64 + Math.max(0, ly), 1);
-      if (this.state === 'countdown') this.ground.prebake(14); else if ((this.frameN = (this.frameN || 0) + 1) % 8 === 0) this.ground.prebake(1); }
+      this.frameN = (this.frameN || 0) + 1; if (this.frameN % 8 === 0) this.ground.flush(); // queued skid marks
+      if (this.state === 'countdown') this.ground.prebake(14); else if (this.frameN % 8 === 4) this.ground.prebake(1); }
     this.ground.draw(g, v.x - 0 + v.shakeX / v.zoom, v.y + v.shakeY / v.zoom, v.zoom, W, H);
     if (T.ocean) this.ground.drawSea(g, v, this.time);
     mk && mk('ground');
@@ -713,42 +730,49 @@ export class Game {
     const inTun = o => T.hasTun && LI.tnNear[idx(o)] && (o.z || 0) < 12 && Math.abs(o.lat || 0) < T.hw[idx(o)] + 70;
     const onDeck = o => (o.z || 0) >= ELEV_T || (LI.elevNear[idx(o)] && Math.abs(o.lat || 0) < T.hw[idx(o)] + T.wl[idx(o)] + 24 && !inTun(o));
     const high = o => (o.z || 0) >= ELEV_T;
-    if (T.hasElev || T.hasTun) drawDeckShadows(g, v, T, vis);
     mk && mk('shadows');
     for (const it of this.items) if ((it.t === 'boost' || it.t === 'oil') && !high(it) && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
     for (const m of this.mines) if (!high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
     if (this.hazards) this.hazards.drawGround(g, v, this.time);
+    if (this.traffic) this.traffic.drawRoads(g, v, this.time);
     if (this.ghost && this.state === 'racing') this.drawGhost(g);
-    if (this.quality >= 1) drawWalls(g, v, T, vis);
+    // barriers + flyover/tunnel shadows: one cached layer
+    if (!this.lc) this.lc = { low: new LayerCache(), deck: new LayerCache(), tun: new LayerCache() };
+    if (this.quality >= 1 || T.hasElev || T.hasTun) this.lc.low.draw(g, v, 'low', (cg, cv) => { const vv = makeVis(T, cv); if (T.hasElev || T.hasTun) drawDeckShadows(cg, cv, T, vv); if (this.quality >= 1) drawWalls(cg, cv, T, vv); });
     mk && mk('walls+haz');
     // pickups hover under the cars (cars drive over them, never under)
     for (const it of this.items) if (it.active && it.t !== 'boost' && it.t !== 'oil' && !high(it) && v.visible(it.x, it.y, 40)) drawItem(g, v, it, this.time);
+    if (this.peds) this.peds.draw(g, v);
     const list = [];
     const P = this.sortedProps;
-    for (let i = 0; i < P.length; i++) { const p = P[i]; if (v.visible(p.x, p.y, p.w ? 220 : 60)) list.push({ y: p.y + (p.type === 'dune' || p.type === 'lava' ? -200 : 0), k: 0, o: p }); }
+    const lowQ = this.quality < 1; // lowest quality thins out small decorative scenery
+    for (let i = 0; i < P.length; i++) { const p = P[i]; if (lowQ && !p.w && p.v < 0.45 && p.type !== 'tyres' && p.type !== 'lamp') continue; if (v.visible(p.x, p.y, p.w ? 220 : 60)) list.push({ y: p.y + (p.type === 'dune' || p.type === 'lava' ? -200 : 0), k: 0, o: p }); }
     const vcars = this.cars.filter(c => !c.dead && v.visible(c.x, c.y, 60));
     for (const c of vcars) { c._L = inTun(c) ? 2 : onDeck(c) ? 1 : 0; if (c._L === 0) list.push({ y: c.y + 4, k: 2, o: c }); }
     if (this.hazards) this.hazards.collect(list, v);
+    if (this.traffic) this.traffic.collect(list, v, LI);
     list.sort((a, b) => a.y - b.y);
-    const carOpts = (c, alpha) => ({ night: this.night, alpha, tag: c !== this.human && this.mode !== 'attract', tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' });
+    const carOpts = (c, alpha) => ({ night: this.night && !lowQ, alpha, tag: c !== this.human && this.mode !== 'attract', tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' });
     for (const e of list) { if (e.k === 0) drawProp(g, v, e.o, th, this.time); else if (e.k === 3) e.fn(g, v, this.time); else drawCar(g, v, e.o, this.time, carOpts(e.o)); }
     mk && mk('props+cars');
     if (T.hasElev) {
-      drawDecks(g, v, T, vis);
+      this.lc.deck.draw(g, v, 'deck', (cg, cv) => drawDecks(cg, cv, T, makeVis(T, cv)));
     mk && mk('decks');
       // cars passing underneath a flyover show through it as a faint silhouette instead of vanishing
-      for (const c of vcars) { const t = c._L === 0 && LI.underDeck(c.x, c.y) ? 0.4 : 0; c.xA = (c.xA || 0) + (t - (c.xA || 0)) * Math.min(1, dt * 10); if (c.xA > 0.03) drawCar(g, v, c, this.time, carOpts(c, c.xA)); }
+      if (!lowQ) for (const c of vcars) { const t = c._L === 0 && LI.underDeck(c.x, c.y) ? 0.4 : 0; c.xA = (c.xA || 0) + (t - (c.xA || 0)) * Math.min(1, dt * 10); if (c.xA > 0.03) drawCar(g, v, c, this.time, carOpts(c, c.xA)); }
     }
     // anything on a deck or airborne is drawn after the decks - on every map, not only ones with flyovers
     for (const it of this.items) if (high(it) && v.visible(it.x, it.y, 60)) { if (it.t === 'boost' || it.t === 'oil' || it.active) drawItem(g, v, it, this.time); }
     for (const m of this.mines) if (high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
+    if (this.traffic) this.traffic.drawLayer(g, v, 1);
     vcars.filter(c => c._L === 1).sort((a, b) => (a.z * 1000 + a.y) - (b.z * 1000 + b.y)).forEach(c => drawCar(g, v, c, this.time, carOpts(c)));
     if (T.hasTun) {
       const tg = this.camTarget || this.human;
       const focus = tg && LI.tnNear[idx(tg)] ? idx(tg) : -1;
-      drawTunnels(g, v, T, vis, focus);
+      this.lc.tun.draw(g, v, 'tun' + (focus >= 0 ? LI.runOf(focus) : -1), (cg, cv) => drawTunnels(cg, cv, T, makeVis(T, cv), focus));
       // everything underground is drawn over the hill (which is see-through when you're inside) so it never flickers out of sight
       for (const it of this.items) if ((it.active || it.t === 'boost' || it.t === 'oil') && it.tn && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
+      if (this.traffic) this.traffic.drawLayer(g, v, 2);
       for (const c of vcars.filter(c => c._L === 2).sort((a, b) => a.y - b.y)) {
         const near = focus >= 0 && Math.min(Math.abs(c.pos - focus), N - Math.abs(c.pos - focus)) < 90, t = near ? 1 : 1 - 0.55 * clamp(LI.tnDepth[idx(c)] / 10, 0, 1);
         c.tunA = c.tunA == null ? t : c.tunA + (t - c.tunA) * Math.min(1, dt * 6); drawCar(g, v, c, this.time, carOpts(c, c.tunA));

@@ -307,6 +307,16 @@ function drawMods(g, v, c, t) {
   });
 }
 
+let FLAME = null, BEAM = null; const TAGS = new Map();
+/** name tags are rendered once (text drawing every frame is surprisingly expensive) */
+function tagSprite(name, col) {
+  const k = name + col; let c = TAGS.get(k); if (c) return c; c = document.createElement('canvas'); const x = c.getContext('2d'); x.font = 'bold 24px "Trebuchet MS", sans-serif';
+  c.width = Math.ceil(x.measureText(name).width) + 12; c.height = 30; x.font = 'bold 24px "Trebuchet MS", sans-serif'; x.textAlign = 'center'; x.lineWidth = 6; x.lineJoin = 'round'; x.strokeStyle = 'rgba(0,0,0,0.8)'; x.strokeText(name, c.width / 2, 24); x.fillStyle = col; x.fillText(name, c.width / 2, 24); TAGS.set(k, c); return c;
+}
+function flameSprite() { if (FLAME) return FLAME; const c = FLAME = document.createElement('canvas'); c.width = 64; c.height = 16; const x = c.getContext('2d'), gr = x.createLinearGradient(64, 0, 0, 0);
+  gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.3, 'rgba(80,190,255,0.85)'); gr.addColorStop(1, 'rgba(40,80,255,0)'); x.fillStyle = gr; x.beginPath(); x.moveTo(64, 0); x.lineTo(0, 8); x.lineTo(64, 16); x.fill(); return c; }
+function beamSprite() { if (BEAM) return BEAM; const c = BEAM = document.createElement('canvas'); c.width = 117; c.height = 75; const x = c.getContext('2d'), gr = x.createLinearGradient(0, 0, 117, 0);
+  gr.addColorStop(0, 'rgba(255,245,200,0.45)'); gr.addColorStop(1, 'rgba(255,245,200,0)'); x.fillStyle = gr; x.beginPath(); x.moveTo(0, 34); x.lineTo(117, 0); x.lineTo(117, 75); x.lineTo(0, 41); x.closePath(); x.fill(); return c; }
 export function drawCar(g, v, c, t, opts = {}) {
   const L = c.len, Wd = c.wid, col = c.color, hl = L / 2, hwid = Wd / 2;
   if (c.dead) return;
@@ -317,13 +327,12 @@ export function drawCar(g, v, c, t, opts = {}) {
   // night headlights
   if (opts.night) {
     g.save(); g.globalCompositeOperation = 'lighter'; g.setTransform(v.zoom * Math.cos(c.a), v.zoom * Math.sin(c.a), -v.zoom * Math.sin(c.a), v.zoom * Math.cos(c.a), v.px(c.x, c.y, c.z || 0), v.py(c.x, c.y, c.z || 0));
-    const gr = g.createLinearGradient(hl, 0, hl + 230, 0); gr.addColorStop(0, 'rgba(255,245,200,0.45)'); gr.addColorStop(1, 'rgba(255,245,200,0)');
-    g.fillStyle = gr; g.beginPath(); g.moveTo(hl - 4, -7); g.lineTo(hl + 230, -75); g.lineTo(hl + 230, 75); g.lineTo(hl - 4, 7); g.closePath(); g.fill(); g.restore();
+    g.drawImage(beamSprite(), hl - 4, -75, 234, 150); g.restore();
   }
   // nitro flame
   if (c.nitroOn) {
     g.save(); g.globalCompositeOperation = 'lighter'; const fl = 26 + Math.random() * 16;
-    layer(g, v, c, 5, () => { const gr = g.createLinearGradient(-hl, 0, -hl - fl, 0); gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.3, 'rgba(80,190,255,0.85)'); gr.addColorStop(1, 'rgba(40,80,255,0)'); g.fillStyle = gr; g.beginPath(); g.moveTo(-hl, -5); g.lineTo(-hl - fl, 0); g.lineTo(-hl, 5); g.fill(); });
+    layer(g, v, c, 5, () => g.drawImage(flameSprite(), -hl - fl, -5, fl, 10));
     g.restore();
   }
   // wheels
@@ -360,7 +369,7 @@ export function drawCar(g, v, c, t, opts = {}) {
     g.fillStyle = shade(col, 0.05); rr(g, off - cw / 2 + cw * 0.28, -hwid + 5, cw * 0.5, Wd - 10, 3); g.fill();
   });
   if (shape === 'sport' || shape === 'muscle') layer(g, v, c, 21, () => { g.fillStyle = shade(col, -0.35); g.fillRect(-hl - 1, -hwid + 1, 4, Wd - 2); });
-  if (c.braking) layer(g, v, c, 9, () => { g.globalCompositeOperation = 'lighter'; for (const sy of [-1, 1]) { const gr = g.createRadialGradient(-hl, sy * (hwid - 4), 0, -hl, sy * (hwid - 4), 16); gr.addColorStop(0, 'rgba(255,40,30,0.8)'); gr.addColorStop(1, 'rgba(255,40,30,0)'); g.fillStyle = gr; g.beginPath(); g.arc(-hl, sy * (hwid - 4), 16, 0, TAU); g.fill(); } });
+  if (c.braking) layer(g, v, c, 9, () => { g.globalCompositeOperation = 'lighter'; const spr = glowSprite('255,40,30', 0.8); for (const sy of [-1, 1]) g.drawImage(spr, -hl - 16, sy * (hwid - 4) - 16, 32, 32); });
   drawMods(g, v, c, t);
   // damage overlay
   const hpf = c.hp / c.maxHp;
@@ -368,7 +377,7 @@ export function drawCar(g, v, c, t, opts = {}) {
   g.globalAlpha = 1;
   if (opts.tag) { // name tag
     const X = v.px(c.x, c.y, 34), Y = v.py(c.x, c.y, 34) - 14 * v.zoom;
-    g.font = `bold ${Math.max(10, 12 * v.zoom)}px "Trebuchet MS", sans-serif`; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,0.8)'; g.strokeText(c.name, X, Y); g.fillStyle = opts.tagColor || '#fff'; g.fillText(c.name, X, Y);
+    const tg = tagSprite(c.name, opts.tagColor || '#fff'), sc = Math.max(10, 12 * v.zoom) / 24; g.drawImage(tg, X - tg.width * sc / 2, Y - 19 * sc, tg.width * sc, tg.height * sc);
     const w = 34 * v.zoom; g.fillStyle = 'rgba(0,0,0,0.6)'; g.fillRect(X - w / 2, Y + 3, w, 4 * v.zoom); g.fillStyle = hpf > 0.5 ? '#46d16a' : hpf > 0.25 ? '#f2c230' : '#e8402f'; g.fillRect(X - w / 2, Y + 3, w * clamp(hpf, 0, 1), 4 * v.zoom);
   }
 }
