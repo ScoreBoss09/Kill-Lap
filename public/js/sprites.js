@@ -199,7 +199,7 @@ export function drawProp(g, v, p, th, t) {
       for (const sd of [-30, 30]) { g.beginPath(); g.moveTo(v.px(x + c * sd, y + s2 * sd, 0), v.py(x + c * sd, y + s2 * sd, 0)); g.lineTo(v.px(x + c * sd, y + s2 * sd, 85), v.py(x + c * sd, y + s2 * sd, 85)); g.stroke(); }
       const cols = ['#ff2d95', '#18e0ff', '#ffe600', '#7dff3a'], col = cols[Math.floor(p.v * 4)];
       g.fillStyle = '#111'; g.beginPath(); for (const [a, b] of [[-42, 85], [42, 85], [42, 128], [-42, 128]]) { const X = v.px(x + c * a, y + s2 * a, b), Y = v.py(x + c * a, y + s2 * a, b); g.lineTo(X, Y); } g.closePath(); g.fill();
-      g.strokeStyle = col; g.lineWidth = 3 * v.zoom; g.shadowColor = col; g.shadowBlur = 12; g.stroke(); g.shadowBlur = 0;
+      g.strokeStyle = col; g.globalAlpha = 0.35; g.lineWidth = 9 * v.zoom; g.stroke(); g.globalAlpha = 1; g.lineWidth = 3 * v.zoom; g.stroke(); // neon edge (no shadowBlur: very slow on the GPU)
       break;
     }
     case 'tyres': {
@@ -402,13 +402,18 @@ export function drawProjectile(g, v, p, t) {
     g.fillStyle = '#2a2d22'; g.beginPath(); g.arc(X, Y, 4.2 * v.zoom, 0, TAU); g.fill(); g.fillStyle = Math.floor(t * 14) % 2 ? '#ff4a2a' : '#661a10'; g.beginPath(); g.arc(X, Y, 1.8 * v.zoom, 0, TAU); g.fill();
   }
 }
+/** mines: hazard-striped, with a pulsing warning ring and a flashing light so they read clearly at speed */
 export function drawMine(g, v, m, t) {
-  const armed = m.arm <= 0, X = v.px(m.x, m.y, 3 + (m.z || 0)), Y = v.py(m.x, m.y, 3 + (m.z || 0));
-  g.save(); g.translate(X, Y); g.scale(v.zoom, v.zoom);
-  g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(3, 3, 12, 8, 0, 0, TAU); g.fill();
-  g.fillStyle = '#2b2d33'; g.beginPath(); g.arc(0, 0, 11, 0, TAU); g.fill(); g.fillStyle = '#41444d'; g.beginPath(); g.arc(0, -1, 8.5, 0, TAU); g.fill();
-  g.fillStyle = armed && Math.floor(t * 3) % 2 ? '#ff2b2b' : '#6b1a1a'; g.beginPath(); g.arc(0, -1, 3, 0, TAU); g.fill();
-  g.strokeStyle = '#555'; g.lineWidth = 2; for (let k = 0; k < 6; k++) { const a = k * TAU / 6; g.beginPath(); g.moveTo(Math.cos(a) * 10, Math.sin(a) * 10); g.lineTo(Math.cos(a) * 14, Math.sin(a) * 14); g.stroke(); }
+  const armed = m.arm <= 0, X = v.px(m.x, m.y, 3 + (m.z || 0)), Y = v.py(m.x, m.y, 3 + (m.z || 0)), z = v.zoom, ph = (t * 1.6 + (m.x + m.y) * 0.01) % 1, flash = Math.floor(t * 4) % 2;
+  // warning ring on the ground (grows and fades) + glow
+  if (armed) { g.strokeStyle = `rgba(255,60,40,${0.75 * (1 - ph)})`; g.lineWidth = 3 * z; g.beginPath(); g.arc(X, Y, (16 + ph * 30) * z, 0, TAU); g.stroke(); g.globalCompositeOperation = 'lighter'; glow(g, X, Y - 1 * z, (flash ? 30 : 20) * z, '255,50,30', flash ? 0.7 : 0.35); g.globalCompositeOperation = 'source-over'; }
+  g.save(); g.translate(X, Y); g.scale(z, z);
+  g.fillStyle = 'rgba(0,0,0,0.4)'; g.beginPath(); g.ellipse(3, 3, 15, 10, 0, 0, TAU); g.fill();
+  g.fillStyle = '#f2c500'; g.beginPath(); g.arc(0, 0, 14, 0, TAU); g.fill(); // yellow/black hazard rim
+  g.fillStyle = '#111'; for (let k = 0; k < 6; k++) { const a0 = k * TAU / 6 + t * 0.6; g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, 14, a0, a0 + TAU / 12); g.closePath(); g.fill(); }
+  g.fillStyle = '#2b2d33'; g.beginPath(); g.arc(0, 0, 9.5, 0, TAU); g.fill(); g.fillStyle = '#4a4d57'; g.beginPath(); g.arc(-1, -2, 6.5, 0, TAU); g.fill();
+  g.fillStyle = armed ? (flash ? '#ff3b2b' : '#8a1a1a') : '#3a7a3a'; g.beginPath(); g.arc(0, -1, 4, 0, TAU); g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.7)'; g.beginPath(); g.arc(-1.4, -2.4, 1.3, 0, TAU); g.fill();
   g.restore();
 }
 

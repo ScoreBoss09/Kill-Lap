@@ -56,16 +56,17 @@ export function drawDeckShadows(g, v, T, vis) {
 /** raised / banked road: earthworks on tall sections, pillars on low bridges, tilted surface, parapets.
  *  Segments are grouped into height bands (drawn low to high so flyovers cover what they cross) and every band is
  *  drawn as a handful of batched paths - one fill per colour/texture - instead of a dozen draw calls per segment. */
-export function drawDecks(g, v, T, vis) {
+export function drawDecks(g, v, T, vis, part = 0, parts = 1) {
   const N = T.N, th = T.th, segs = [];
   for (const i of vis) { const j = (i + 1) % N; if (T.elev[i] || T.elev[j]) segs.push(i); }
   if (!segs.length) return;
   const conc = shade(th.wall, -0.1), concTop = shade(th.wallTop, 0.05);
   const tx = v.quality > 0, pats = tx ? { rock: Tex.world(v, 'rock', T.theme), road: Tex.world(v, 'road', T.theme), wall: Tex.world(v, 'wall', T.theme), ground: Tex.world(v, 'ground', T.theme) } : {}; // lowest quality: flat colours
-  for (const i of segs) if (i % 6 === 0 && T.z[i] >= 18 && T.z[i] < 60 && Math.abs(T.tilt[i]) < 10) for (const s of [-0.55, 0.55]) { const [x, y] = pt(T, i, s * T.hw[i]); box(g, v, x, y, 15, 20, T.z[i] - DECK_T, T.ang[i], conc, concTop); }
+  if (part === 0) for (const i of segs) if (i % 6 === 0 && T.z[i] >= 18 && T.z[i] < 60 && Math.abs(T.tilt[i]) < 10) for (const s of [-0.55, 0.55]) { const [x, y] = pt(T, i, s * T.hw[i]); box(g, v, x, y, 15, 20, T.z[i] - DECK_T, T.ang[i], conc, concTop); }
   const zs = i => Math.max(T.z[i], T.z[(i + 1) % N]);
   segs.sort((a, b) => zs(a) - zs(b) || a - b);
-  const bands = []; for (const i of segs) { const B = bands[bands.length - 1]; if (!B || zs(i) - B.z0 > 26) bands.push({ z0: zs(i), segs: [i] }); else B.segs.push(i); }
+  const mine = slice(segs, part, parts); // low-to-high order is kept across the slices
+  const bands = []; for (const i of mine) { const B = bands[bands.length - 1]; if (!B || zs(i) - B.z0 > 26) bands.push({ z0: zs(i), segs: [i] }); else B.segs.push(i); }
   const C = { side: shade(th.wall, -0.3), shoulder: shade(th.wall, 0.05), roadA: th.road, roadB: shade(th.road, 0.03), parA: shade(th.wall, -0.2), parB: shade(th.wall, -0.32), topA: th.wallTop, topB: shade(th.wallTop, -0.12) };
   const rockC = [-0.24, -0.2, -0.16].map(k => shade(th.wall, k)), grdC = [-0.38, -0.34, -0.3].map(k => shade(th.ground, k));
   for (const band of bands) {
@@ -127,26 +128,31 @@ export function tunnelRuns(T) {
 }
 export function drawTunnels(g, v, T, vis, focus = -1) {
   const runs = tunnelRuns(T); if (!runs.length) return; const th = T.th, N = T.N, near = new Set(vis);
-  const rock = [shade(th.wall, -0.2), shade(th.wall, -0.27), shade(th.wall, -0.14), shade(th.wall, -0.23)];
-  const rockP = v.quality > 0 ? Tex.world(v, 'rock', T.theme) : null, grdP = v.quality > 0 ? Tex.world(v, 'ground', T.theme) : null, grassy = ['forest', 'snow', 'coast', 'desert', 'warzone'].includes(T.theme); g.save();
+  const base = shade(th.wall, -0.2), grassy = ['forest', 'snow', 'coast', 'desert', 'warzone'].includes(T.theme), tx = v.quality > 0;
+  const prof = [[-1, 0.8], [-0.82, 0.93], [-0.5, 0.99], [0, 1], [0.5, 0.99], [0.82, 0.93], [1, 0.8]], lit = [-0.24, -0.12, 0.02, 0.1, -0.02, -0.14, -0.28];
+  // one colour (pre-tinted texture) per strip of the hill profile, so the whole hill is ~8 fills instead of ~20 per road sample
+  const strips = prof.slice(0, -1).map((_, q) => { const top = grassy && q >= 1 && q <= 4, k = (lit[q] + lit[q + 1]) / 2 + 0.02, col = top ? shade(th.ground, k * 0.8 - 0.06) : shade(base, k);
+    return { col, pat: tx ? Tex.worldTinted(v, top ? 'ground' : 'rock', T.theme, col, 0.45) : null }; });
+  g.save();
   for (const idx of runs) {
     // the hill turns see-through while you are inside it, so the road and every car underneath stay visible
-    let runA = 0.94; if (focus >= 0 && idx.some(q => Math.min(Math.abs(q - focus), N - Math.abs(q - focus)) < 20)) runA = 0.34; g.globalAlpha = runA;
+    let runA = 0.94; if (focus >= 0 && idx.some(q => Math.min(Math.abs(q - focus), N - Math.abs(q - focus)) < 20)) runA = 0.34;
+    const paths = strips.map(() => new Path2D()), side = new Path2D(), dots = new Path2D(); let any = false;
+    const quad = (p, a, b, c, d) => { p.moveTo(a[0], a[1]); p.lineTo(b[0], b[1]); p.lineTo(c[0], c[1]); p.lineTo(d[0], d[1]); p.closePath(); };
     for (let k = 0; k < idx.length - 1; k++) {
-      const i = idx[k], j = idx[k + 1]; if (!near.has(i) && !near.has(j)) continue;
+      const i = idx[k], j = idx[k + 1]; if (!near.has(i)) continue; any = true;
       const hi = T.hw[i] + 56, hj = T.hw[j] + 56; const P = (q, lat, z) => { const [x, y] = pt(T, q, lat); return [v.px(x, y, z), v.py(x, y, z)]; };
-      const quad = (a, b, c, d, col) => { g.fillStyle = col; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath(); g.fill(); };
       const cx = (T.x[i] + T.x[j]) / 2, cy = (T.y[i] + T.y[j]) / 2, camLat = (v.x - cx) * -T.ty[i] + (v.y - cy) * T.tx[i];
-      if (camLat > hi) quad(P(i, hi, 0), P(j, hj, 0), P(j, hj, TUN_H * 0.8), P(i, hi, TUN_H * 0.8), shade(th.wall, -0.45));
-      if (camLat < -hi) quad(P(i, -hi, 0), P(j, -hj, 0), P(j, -hj, TUN_H * 0.8), P(i, -hi, TUN_H * 0.8), shade(th.wall, -0.45));
-      // hill profile: rounded top built from lit strips (light from the top-left)
-      const strip = (l0, l1, h0, h1, col, top) => { g.globalAlpha = runA; texQuad(g, P(i, l0 * hi, h0), P(j, l0 * hj, h0), P(j, l1 * hj, h1), P(i, l1 * hi, h1), top ? grdP : rockP, col, 0.45); g.globalAlpha = runA; };
-      const prof = [[-1, 0.8], [-0.82, 0.93], [-0.5, 0.99], [0, 1], [0.5, 0.99], [0.82, 0.93], [1, 0.8]], lit = [-0.24, -0.12, 0.02, 0.1, -0.02, -0.14, -0.28];
-      const base = rock[((i >> 4) * 3) % rock.length];
-      for (let q = 0; q < prof.length - 1; q++) { const top = grassy && q >= 1 && q <= 4, k = (lit[q] + lit[q + 1]) / 2 + 0.02 + (((i * 2654435761) >>> 28) / 15 - 0.5) * 0.03; strip(prof[q][0], prof[q + 1][0], TUN_H * prof[q][1], TUN_H * prof[q + 1][1], top ? shade(th.ground, k * 0.8 - 0.06) : shade(base, k), top); } // grassy hilltop on green/sandy maps, rock flanks
-      if (((i >> 1) & 3) === 0) { g.fillStyle = rgba(th.speck, 0.18); const m = P(i, (((i * 13) % 9) - 4) * hi / 6, TUN_H); g.beginPath(); g.arc(m[0], m[1], 9 * v.zoom, 0, TAU); g.fill(); }
-      if (i % 5 === 0) { const m = P(i, (((i * 29) % 11) - 5) * hi / 7, TUN_H); g.fillStyle = th.night ? '#3a3040' : shade(th.ground, -0.3); g.beginPath(); g.arc(m[0], m[1], (5 + (i % 4)) * v.zoom, 0, TAU); g.fill(); g.fillStyle = shade(th.ground, 0.08); g.beginPath(); g.arc(m[0] - 2 * v.zoom, m[1] - 2 * v.zoom, 3 * v.zoom, 0, TAU); g.fill(); }
+      if (camLat > hi) quad(side, P(i, hi, 0), P(j, hj, 0), P(j, hj, TUN_H * 0.8), P(i, hi, TUN_H * 0.8));
+      if (camLat < -hi) quad(side, P(i, -hi, 0), P(j, -hj, 0), P(j, -hj, TUN_H * 0.8), P(i, -hi, TUN_H * 0.8));
+      for (let q = 0; q < prof.length - 1; q++) { const l0 = prof[q][0], l1 = prof[q + 1][0], h0 = TUN_H * prof[q][1], h1 = TUN_H * prof[q + 1][1]; quad(paths[q], P(i, l0 * hi, h0), P(j, l0 * hj, h0), P(j, l1 * hj, h1), P(i, l1 * hi, h1)); }
+      if (i % 5 === 0) { const m = P(i, (((i * 29) % 11) - 5) * hi / 7, TUN_H); dots.moveTo(m[0] + 6 * v.zoom, m[1]); dots.arc(m[0], m[1], (5 + (i % 4)) * v.zoom, 0, TAU); }
     }
+    if (!any) continue;
+    g.globalAlpha = runA; g.fillStyle = shade(th.wall, -0.45); g.fill(side);
+    if (tx) g.imageSmoothingEnabled = false;
+    strips.forEach((s, q) => { g.fillStyle = s.pat || s.col; g.fill(paths[q]); });
+    g.imageSmoothingEnabled = true; g.fillStyle = th.night ? '#3a3040' : shade(th.ground, -0.3); g.fill(dots);
     // portals (entrance faces the camera when approaching, exit when leaving)
     for (const [i, dir] of [[idx[0], -1], [idx[idx.length - 1], 1]]) {
       if (!near.has(i)) continue; const x = T.x[i], y = T.y[i], tx = T.tx[i] * dir, ty = T.ty[i] * dir;
@@ -162,20 +168,29 @@ export function drawTunnels(g, v, T, vis, focus = -1) {
   g.restore();
 }
 
-/** A cached screen-space layer for static 3D structures (barriers, flyovers, tunnel hills). It is redrawn only when the
- *  camera has moved far enough for the perspective lean to visibly change (or zoom/state changes); in between it is
- *  blitted with an offset. This turns a few thousand path operations per frame into one drawImage most frames. */
+/** A cached screen-space layer for static 3D structures (barriers, flyovers, tunnel hills), double-buffered.
+ *  The visible copy is blitted with an offset/scale every frame; once the camera has moved far enough for the
+ *  perspective lean to start drifting, a fresh copy is rebuilt in the background a slice at a time over the next few
+ *  frames and swapped in - so no single frame ever pays for redrawing the whole layer. */
 export class LayerCache {
-  constructor(thresh = 26) { this.cv = document.createElement('canvas'); this.g = this.cv.getContext('2d'); this.thresh = thresh; this.valid = false; this.vc = new View(); }
+  constructor(thresh = 34, parts = 3) { this.thresh = thresh; this.parts = parts; this.front = this.mk(); this.back = this.mk(); this.valid = false; this.job = null; }
+  mk() { const cv = document.createElement('canvas'); return { cv, g: cv.getContext('2d'), vc: new View(), x: 0, y: 0, zoom: 1, key: null }; }
+  start(buf, v, cw, ch, key) {
+    if (buf.cv.width !== cw || buf.cv.height !== ch) { buf.cv.width = cw; buf.cv.height = ch; } else buf.g.clearRect(0, 0, cw, ch);
+    Object.assign(buf.vc, { x: v.x, y: v.y, zoom: v.zoom, W: cw, H: ch, shakeX: 0, shakeY: 0, t: v.t, quality: v.quality }); buf.x = v.x; buf.y = v.y; buf.zoom = v.zoom; buf.key = key;
+  }
   draw(g, v, key, render) {
-    const m = 0.14, cw = Math.ceil(v.W * (1 + 2 * m)), ch = Math.ceil(v.H * (1 + 2 * m));
-    const moved = Math.hypot(v.x - this.x, v.y - this.y) * v.zoom;
-    if (!this.valid || this.cv.width !== cw || this.cv.height !== ch || Math.abs(v.zoom - this.zoom) / v.zoom > 0.012 || moved > this.thresh || key !== this.key) {
-      if (this.cv.width !== cw || this.cv.height !== ch) { this.cv.width = cw; this.cv.height = ch; } else this.g.clearRect(0, 0, cw, ch);
-      const vc = this.vc; Object.assign(vc, { x: v.x, y: v.y, zoom: v.zoom, W: cw, H: ch, shakeX: 0, shakeY: 0, t: v.t, quality: v.quality });
-      render(this.g, vc); this.x = v.x; this.y = v.y; this.zoom = v.zoom; this.key = key; this.valid = true;
+    const m = 0.16, cw = Math.ceil(v.W * (1 + 2 * m)), ch = Math.ceil(v.H * (1 + 2 * m)), F = this.front;
+    const moved = this.valid ? Math.hypot(v.x - F.x, v.y - F.y) * v.zoom : 1e9, zr = this.valid ? v.zoom / F.zoom : 1;
+    const hard = !this.valid || F.cv.width !== cw || F.cv.height !== ch || key !== F.key || moved > this.thresh * 2.2 || zr > 1.12 || zr < 0.89;
+    if (hard) { this.job = null; this.start(F, v, cw, ch, key); for (let p = 0; p < this.parts; p++) render(F.g, F.vc, p, this.parts); this.valid = true; }
+    else {
+      if (!this.job && (moved > this.thresh * 0.55 || zr > 1.035 || zr < 0.966)) { this.start(this.back, v, cw, ch, key); this.job = { p: 0 }; }
+      if (this.job) { render(this.back.g, this.back.vc, this.job.p, this.parts); if (++this.job.p >= this.parts) { this.job = null; [this.front, this.back] = [this.back, this.front]; } }
     }
-    const dx = (this.x - v.x) * v.zoom + v.W / 2 + v.shakeX - cw / 2, dy = (this.y - v.y) * v.zoom + v.H / 2 + v.shakeY - ch / 2;
-    g.drawImage(this.cv, Math.round(dx), Math.round(dy));
+    const B = this.front, k = v.zoom / B.zoom, dx = (B.x - v.x) * v.zoom + v.W / 2 + v.shakeX - cw / 2 * k, dy = (B.y - v.y) * v.zoom + v.H / 2 + v.shakeY - ch / 2 * k;
+    if (Math.abs(k - 1) < 0.002) g.drawImage(B.cv, Math.round(dx), Math.round(dy)); else g.drawImage(B.cv, dx, dy, B.cv.width * k, B.cv.height * k);
   }
 }
+/** the p-th of n contiguous slices of an array */
+export const slice = (arr, p, n) => arr.slice(Math.floor(arr.length * p / n), Math.floor(arr.length * (p + 1) / n));

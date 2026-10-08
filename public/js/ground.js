@@ -25,8 +25,8 @@ function noisePattern(ctx, kind) {
 export class Ground {
   constructor(T, quality = 2) {
     this.T = T; this.q = quality; this.tiles = new Map(); this.queue = []; this.pend = new Map();
-    this.res = quality >= 1 ? 1 : 0.5; // low quality bakes the terrain at half resolution (4x less memory and fill)
-    this.maxTiles = quality >= 1 ? 72 : 160; this.cx = 0; this.cy = 0; // cap on baked tiles kept in (GPU) memory
+    this.res = quality >= 2 ? 1 : quality >= 1 ? 0.75 : 0.5; // lower quality bakes the terrain at lower resolution (less memory and fill)
+    this.maxTiles = quality >= 2 ? 150 : 200; this.cx = 0; this.cy = 0; // keep the whole map baked so nothing is rebuilt mid-race (rebuilding while flying along on nitro caused stutters)
     this.cols = Math.ceil(T.W / TS); this.rows = Math.ceil(T.H / TS);
     this.px = null;
   }

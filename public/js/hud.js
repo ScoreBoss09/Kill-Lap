@@ -29,7 +29,7 @@ export function drawHUD(g, game, W, H, opts = {}) {
   const u = clamp(Math.min(W, H * 1.6) / 1280, 0.62, 1.5), pad = 18 * u;
   const pad_ = Input.lastDevice === 'pad';
   // damage/boost vignette
-  if (game.hudFlash > 0) { game.hudFlash -= 0.016; }
+  if (game.hudFlash > 0) { game.hudFlash -= 0.033; }
   const hpf = car.hp / car.maxHp;
   if (hpf < 0.3 && !car.dead) { g.globalAlpha = 0.8 + Math.sin(game.time * 6) * 0.2; g.drawImage(edgeGlow('180,0,0', 0.42, 0.3), 0, 0, W, H); g.globalAlpha = 1; }
   if (car.nitroOn || car.boostT > 0) g.drawImage(edgeGlow('60,160,255', 0.28, 0.35), 0, 0, W, H);

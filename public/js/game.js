@@ -4,7 +4,7 @@ import { compileTrack, nearest, pointAt, VERGE, ELEV_T } from './tracks.js';
 import { Hazards } from './hazards.js';
 import { Peds } from './peds.js';
 import { Traffic } from './traffic.js';
-import { makeVis, drawWalls, drawDecks, drawDeckShadows, drawTunnels, LayerCache } from './structures.js';
+import { makeVis, drawWalls, drawDecks, drawDeckShadows, drawTunnels, LayerCache, slice } from './structures.js';
 import { carStats, CAR_BY_ID, WEAPONS, DIFFICULTIES, AI_NAMES } from './cars.js';
 import { Ground, gridPos, makeMinimap } from './ground.js';
 import { View, drawProp, drawProp2Glow, drawItem, drawCar, drawProjectile, drawMine, Particles, glow } from './sprites.js';
@@ -737,8 +737,8 @@ export class Game {
     if (this.traffic) this.traffic.drawRoads(g, v, this.time);
     if (this.ghost && this.state === 'racing') this.drawGhost(g);
     // barriers + flyover/tunnel shadows: one cached layer
-    if (!this.lc) this.lc = { low: new LayerCache(), deck: new LayerCache(), tun: new LayerCache() };
-    if (this.quality >= 1 || T.hasElev || T.hasTun) this.lc.low.draw(g, v, 'low', (cg, cv) => { const vv = makeVis(T, cv); if (T.hasElev || T.hasTun) drawDeckShadows(cg, cv, T, vv); if (this.quality >= 1) drawWalls(cg, cv, T, vv); });
+    if (!this.lc) this.lc = { low: new LayerCache(30, 3), deck: new LayerCache(36, 4), tun: new LayerCache(42, 2) }; // staggered so they rarely rebuild in the same frame
+    if (this.quality >= 1 || T.hasElev || T.hasTun) this.lc.low.draw(g, v, 'low', (cg, cv, p, n) => { const vv = makeVis(T, cv); if (p === 0 && (T.hasElev || T.hasTun)) drawDeckShadows(cg, cv, T, vv); if (this.quality >= 1) drawWalls(cg, cv, T, slice(vv, p, n)); });
     mk && mk('walls+haz');
     // pickups hover under the cars (cars drive over them, never under)
     for (const it of this.items) if (it.active && it.t !== 'boost' && it.t !== 'oil' && !high(it) && v.visible(it.x, it.y, 40)) drawItem(g, v, it, this.time);
@@ -756,7 +756,7 @@ export class Game {
     for (const e of list) { if (e.k === 0) drawProp(g, v, e.o, th, this.time); else if (e.k === 3) e.fn(g, v, this.time); else drawCar(g, v, e.o, this.time, carOpts(e.o)); }
     mk && mk('props+cars');
     if (T.hasElev) {
-      this.lc.deck.draw(g, v, 'deck', (cg, cv) => drawDecks(cg, cv, T, makeVis(T, cv)));
+      this.lc.deck.draw(g, v, 'deck', (cg, cv, p, n) => drawDecks(cg, cv, T, makeVis(T, cv), p, n));
     mk && mk('decks');
       // cars passing underneath a flyover show through it as a faint silhouette instead of vanishing
       if (!lowQ) for (const c of vcars) { const t = c._L === 0 && LI.underDeck(c.x, c.y) ? 0.4 : 0; c.xA = (c.xA || 0) + (t - (c.xA || 0)) * Math.min(1, dt * 10); if (c.xA > 0.03) drawCar(g, v, c, this.time, carOpts(c, c.xA)); }
@@ -769,7 +769,7 @@ export class Game {
     if (T.hasTun) {
       const tg = this.camTarget || this.human;
       const focus = tg && LI.tnNear[idx(tg)] ? idx(tg) : -1;
-      this.lc.tun.draw(g, v, 'tun' + (focus >= 0 ? LI.runOf(focus) : -1), (cg, cv) => drawTunnels(cg, cv, T, makeVis(T, cv), focus));
+      this.lc.tun.draw(g, v, 'tun' + (focus >= 0 ? LI.runOf(focus) : -1), (cg, cv, p, n) => drawTunnels(cg, cv, T, slice(makeVis(T, cv), p, n), focus));
       // everything underground is drawn over the hill (which is see-through when you're inside) so it never flickers out of sight
       for (const it of this.items) if ((it.active || it.t === 'boost' || it.t === 'oil') && it.tn && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
       if (this.traffic) this.traffic.drawLayer(g, v, 2);
@@ -850,6 +850,6 @@ export class Game {
     g.fillStyle = '#1a1c22'; g.beginPath(); g.moveTo(A[0], A[1]); g.lineTo(B[0], B[1]); g.lineTo(B2[0], B2[1]); g.lineTo(A2[0], A2[1]); g.closePath(); g.fill();
     g.strokeStyle = '#ff5a1f'; g.lineWidth = 3 * v.zoom; g.stroke();
     const mx = (A[0] + B[0] + A2[0] + B2[0]) / 4, my = (A[1] + B[1] + A2[1] + B2[1]) / 4, ang = Math.atan2(B[1] - A[1], B[0] - A[0]);
-    g.save(); g.translate(mx, my); g.rotate(ang > Math.PI / 2 ? ang - Math.PI : ang < -Math.PI / 2 ? ang + Math.PI : ang); g.font = `900 ${Math.max(14, 30 * v.zoom * (1 + H1 * 0.0011))}px Impact, "Arial Black", sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffd23a'; g.shadowColor = '#ff5a1f'; g.shadowBlur = 10; g.fillText('KILL LAP', 0, 0); g.shadowBlur = 0; g.restore();
+    g.save(); g.translate(mx, my); g.rotate(ang > Math.PI / 2 ? ang - Math.PI : ang < -Math.PI / 2 ? ang + Math.PI : ang); g.font = `900 ${Math.max(14, 30 * v.zoom * (1 + H1 * 0.0011))}px Impact, "Arial Black", sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = 5; g.strokeStyle = 'rgba(255,90,31,0.55)'; g.strokeText('KILL LAP', 0, 0); g.fillStyle = '#ffd23a'; g.fillText('KILL LAP', 0, 0); g.restore();
   }
 }

@@ -19,6 +19,7 @@ import { fmtTime, fmtMoney, clamp, hashStr, mulberry32 } from './util.js';
 
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d', { alpha: false }); // opaque canvas: cheaper to composite
 let W = 0, H = 0;
+const hudCv = document.createElement('canvas'), hudCtx = hudCv.getContext('2d'); let hudTick = 0;
 let resScale = 1, lowFps = 0; // adaptive resolution: only ever lowered, never saved
 function resize() {
   const q = Store.s.quality, scale = ([0.7, 0.85, 1][q] ?? 1) * resScale, dpr = Math.min(window.devicePixelRatio || 1, 1.5) * scale;
@@ -262,7 +263,11 @@ function loop(now) {
       if (!app.paused || g.net) g.frame(dt, app.paused ? NO_INPUT : Input.drive);
       if (app.state === 'race') g.updateAudio(dt);
       g.render(ctx, W, H, dt);
-      if (!g.over) drawHUD(ctx, g, W, H, { fps: Store.s.fps ? app.fps : null, ping: g.net ? Net.ping : null, recordTime: (Store.d.records[g.opts.track.id] || {}).lap && g.mode === 'tt' ? Store.d.records[g.opts.track.id].lap.time : null });
+      if (!g.over) { // the HUD (lots of text) is redrawn at 30 Hz into its own layer and blitted every frame
+        if (hudCv.width !== W || hudCv.height !== H) { hudCv.width = W; hudCv.height = H; hudTick = 0; }
+        if ((hudTick++ & 1) === 0) { hudCtx.clearRect(0, 0, W, H); drawHUD(hudCtx, g, W, H, { fps: Store.s.fps ? app.fps : null, ping: g.net ? Net.ping : null, recordTime: (Store.d.records[g.opts.track.id] || {}).lap && g.mode === 'tt' ? Store.d.records[g.opts.track.id].lap.time : null }); }
+        ctx.drawImage(hudCv, 0, 0);
+      }
       if (g.net && g.over === false && app.paused) { /* menu overlay while sim continues */ }
     } else {
       const a = app.attract;
