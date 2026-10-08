@@ -6,6 +6,7 @@ export const VERGE = 46;     // grass/dirt shoulder between the tarmac and the b
 export const MARGIN = 360;   // world padding around the track
 export const ELEV_T = 6;     // road height above which a sample is drawn as a raised deck instead of baked on the ground
 export const BANK_K = 24000, BANK_MAX = 64, BANK_LIFT = 14; // banking: tilt (height difference across the road) per unit curvature, its limit, and the gentle lift curves get
+export const OCEAN_D = 1150; // depth of the ocean strip added to coastal worlds
 export const BRIDGE_WALL = 14, TUN_WALL = 22; // barrier offset from the road edge on decks / in tunnels
 
 export const THEMES = {
@@ -71,29 +72,82 @@ function figure8(id, name, theme, o) {
   }
   return finish(id, name, theme, pts, o);
 }
+/* ---- self-crossing circuits: a parametric curve that crosses itself, then bridges at every crossing and tunnels in the long gaps */
+const KNOTS = {
+  f8: t => [Math.sin(t), Math.sin(2 * t) / 2],                         // figure of eight: 1 crossing
+  chain: t => [Math.sin(t), Math.cos(3 * t) * 0.7],                   // three lobes: 2 crossings
+  tre: t => [(Math.sin(t) + 2 * Math.sin(2 * t)) / 3, (Math.cos(t) - 2 * Math.cos(2 * t)) / 3], // trefoil: 3 crossings
+  lima: t => { const r = 0.35 + Math.cos(t); return [r * Math.cos(t) * 0.9 - 0.35, r * Math.sin(t) * 0.9]; }, // loop-the-loop: 1 crossing
+  bean: t => [Math.sin(t) + 0.28 * Math.sin(2 * t + 0.6), Math.sin(2 * t) / 2 + 0.2 * Math.cos(t)], // lopsided eight
+};
+function knotPts(o, phase) {
+  const n = o.n || 36, f = KNOTS[o.kind || 'f8'], c = Math.cos(o.rot || 0), s = Math.sin(o.rot || 0), pts = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * TAU + phase; let [u, v] = f(t);
+    for (const [k, amp, ph] of o.h || []) { const m = 1 + amp * Math.cos(k * t + ph); u *= m; v *= 2 - m; }
+    u *= o.A; v *= o.B; pts.push([Math.round(u * c - v * s), Math.round(u * s + v * c), null, 0, 0, 0]);
+  }
+  return pts;
+}
+/** dense arclength-sampled spline of a point loop (matches compileTrack's Catmull-Rom) plus every place it crosses itself */
+function findCrossings(pts, minGap = 1200) {
+  const n = pts.length, sub = 10, X = [], Y = [];
+  for (let i = 0; i < n; i++) { const a = pts[(i - 1 + n) % n], b = pts[i], c = pts[(i + 1) % n], d = pts[(i + 2) % n]; for (let k = 0; k < sub; k++) { const t = k / sub; X.push(catmull(a[0], b[0], c[0], d[0], t)); Y.push(catmull(a[1], b[1], c[1], d[1], t)); } }
+  const M = X.length, cum = [0]; for (let i = 0; i < M; i++) cum.push(cum[i] + Math.hypot(X[(i + 1) % M] - X[i], Y[(i + 1) % M] - Y[i])); const L = cum[M];
+  const sPt = pts.map((_, i) => cum[i * sub]), out = [];
+  for (let a = 0; a < M; a++) for (let b = a + 2; b < M; b++) {
+    const sa = cum[a], sb = cum[b], dd = sb - sa; if (dd < minGap || L - dd < minGap) continue;
+    const a2 = (a + 1) % M, b2 = (b + 1) % M, r = [X[a2] - X[a], Y[a2] - Y[a]], q = [X[b2] - X[b], Y[b2] - Y[b]], den = r[0] * q[1] - r[1] * q[0]; if (Math.abs(den) < 1e-9) continue;
+    const u = ((X[b] - X[a]) * q[1] - (Y[b] - Y[a]) * q[0]) / den, w = ((X[b] - X[a]) * r[1] - (Y[b] - Y[a]) * r[0]) / den;
+    if (u >= 0 && u < 1 && w >= 0 && w < 1) out.push({ sa: sa + u * (cum[a + 1] - sa), sb: sb + w * (cum[b + 1] - sb), x: X[a] + r[0] * u, y: Y[a] + r[1] * u, ang: Math.abs(Math.atan2(Math.abs(den), r[0] * q[0] + r[1] * q[1])) });
+  }
+  return { out, L, sPt };
+}
+const circ = (a, b, L) => { const d = Math.abs(a - b) % L; return Math.min(d, L - d); };
+function weave(id, name, theme, o) {
+  const Zb = o.bridge || 72; let best = null;
+  for (let k = 0; k < 36 && !best; k++) {
+    const phase = (o.ph || 0) + (k * TAU) / 36, pts = knotPts(o, phase), { out, L, sPt } = findCrossings(pts);
+    if (!out.length || out.some(c => c.ang < 0.5 || circ(c.sa, 0, L) < 1500 || circ(c.sb, 0, L) < 1500)) continue;
+    // choose which pass is the flyover so the road alternates over/under
+    const up = [], down = [];
+    for (const c of out) {
+      const score = (p, q) => up.filter(s => circ(s, q, L) < 1500).length + down.filter(s => circ(s, p, L) < 1500).length;
+      if (score(c.sa, c.sb) <= score(c.sb, c.sa)) { up.push(c.sa); down.push(c.sb); } else { up.push(c.sb); down.push(c.sa); }
+    }
+    const PL = 330, PR = 1250;
+    pts.forEach((p, i) => { for (const s of up) { const d = circ(sPt[i], s, L); if (d < PR) { const f = d <= PL ? 1 : 1 - (d - PL) / (PR - PL); p[3] = Math.max(p[3], Math.round(Zb * f * f * (3 - 2 * f))); } } });
+    // tunnels through the middle of the longest gaps between crossings
+    const ev = [0, ...up, ...down].sort((a, b) => a - b), gaps = ev.map((s, i) => ({ s, len: i + 1 < ev.length ? ev[i + 1] - s : L - s })).sort((a, b) => b.len - a.len);
+    for (const g of gaps.slice(0, o.tunnels || 0)) if (g.len > 3300) { const mid = g.s + g.len / 2; pts.forEach((p, i) => { if (circ(sPt[i], mid, L) < (o.tunLen || 560) && p[3] < 20) p[4] = 1; }); }
+    best = pts;
+  }
+  if (!best) best = knotPts(o, 0);
+  return finish(id, name, theme, best, { ...o, tags: [...(o.tags || []), 'crossover'] });
+}
 function pts(id, name, theme, p, o = {}) { return finish(id, name, theme, p, o); }
 
 export const BUILTIN_TRACKS = [
-  loop('dustbowl', 'Dust Bowl', 'desert', { rx: 1900, ry: 1250, h: [[2, 0.08, 0.4], [3, 0.1, 1.2], [5, 0.04, 2]], width: 170, diff: 1, seed: 11 }),
-  loop('pinewood', 'Pinewood Run', 'forest', { rx: 1850, ry: 1300, h: [[3, 0.12, 0], [2, 0.1, 2.2], [6, 0.03, 1]], n: 30, width: 160, diff: 1, seed: 21 }),
-  pts('frostbite', 'Frostbite Pass', 'snow', [[0, 0], [700, -120], [1400, 120], [2100, -60], [2800, 200], [3200, 800], [2900, 1400], [2300, 1500], [1900, 1050], [1400, 1250], [1500, 1850], [2100, 2200], [1500, 2600], [700, 2400], [200, 1900], [500, 1300], [100, 800]], { width: 150, diff: 2 }),
-  loop('neon', 'Neon Nights', 'city', { bank: true, rx: 1800, ry: 1100, h: [[2, 0.18, 0.3], [4, 0.09, 1.6], [7, 0.025, 0.5]], n: 32, width: 150, diff: 2, seed: 31 }),
-  pts('foundry', 'The Foundry', 'industrial', [[0, 0], [800, 0], [1500, -200], [2300, 0], [2900, 450], [2800, 1100], [2100, 1300], [1800, 1800], [2300, 2300], [1700, 2800], [900, 2650], [500, 2100], [900, 1650], [400, 1250], [-200, 900], [-300, 400]], { width: 150, diff: 2 }),
-  loop('inferno', 'Inferno Ring', 'volcano', { bank: true, rx: 1700, ry: 1500, h: [[3, 0.14, 0.6], [5, 0.08, 0], [2, 0.12, 2.8]], n: 34, width: 150, diff: 3, seed: 41 }),
-  pts('seaside', 'Seaside Sprint', 'coast', [[0, 600], [500, 150], [1300, 100], [2100, 350], [2900, 250], [3500, 650], [3600, 1250], [3100, 1700], [2400, 1600], [1900, 1950], [2200, 2500], [1600, 2800], [800, 2600], [300, 2000], [500, 1400]], { width: 170, diff: 1 }),
-  loop('canyon', 'Canyon Carnage', 'mesa', { bank: true, rx: 2000, ry: 1200, h: [[2, 0.2, 1], [4, 0.1, 0.2], [7, 0.035, 2.5]], n: 36, width: 145, diff: 3, seed: 51 }),
-  pts('serpent', 'Serpent', 'desert', [[600, 500], [1300, 380], [2000, 520], [2700, 420], [3300, 700], [3500, 1300], [3100, 1700], [2550, 1550], [2100, 1850], [2250, 2300], [2800, 2550], [3000, 2850], [2400, 3050], [1600, 2800], [1000, 3000], [500, 2600], [700, 2000], [1300, 1700], [900, 1300], [400, 1000]], { width: 150, diff: 3 }),
-  loop('timberline', 'Timberline Twist', 'forest', { bank: true, rx: 1700, ry: 1450, h: [[5, 0.12, 0.3], [3, 0.13, 2], [2, 0.08, 1]], n: 40, width: 145, diff: 3, seed: 61 }),
-  loop('glacier', 'Glacier Gauntlet', 'snow', { bank: true, rx: 2100, ry: 1100, h: [[4, 0.14, 1.1], [3, 0.1, 0], [6, 0.04, 2]], n: 36, width: 150, diff: 2, seed: 71 }),
-  loop('midnight', 'Midnight Docks', 'industrial', { rx: 1750, ry: 1400, h: [[2, 0.16, 2.4], [5, 0.1, 1.1], [3, 0.07, 0.4]], n: 34, width: 150, diff: 2, seed: 81 }),
-  loop('kingpin', 'Kingpin Circuit', 'city', { bank: true, rx: 2100, ry: 1500, h: [[3, 0.11, 0.5], [5, 0.09, 2.2], [8, 0.02, 1]], n: 40, width: 155, diff: 4, seed: 91 }),
-  loop('lavaflow', 'Lava Flow', 'volcano', { bank: true, rx: 2200, ry: 1250, h: [[2, 0.14, 0.2], [4, 0.1, 2.1], [6, 0.05, 0.9]], n: 38, width: 150, diff: 3, seed: 101 }),
+  weave('dustbowl', 'Dust Bowl', 'desert', { kind: 'f8', A: 1950, B: 1500, n: 30, h: [[3, 0.06, 0.4]], width: 170, diff: 1, seed: 11, bridge: 72 }),
+  weave('pinewood', 'Pinewood Run', 'forest', { kind: 'lima', A: 1800, B: 1600, n: 34, h: [[3, 0.05, 1.2]], width: 160, diff: 1, seed: 21, tunnels: 1 }),
+  weave('frostbite', 'Frostbite Pass', 'snow', { kind: 'chain', A: 2500, B: 1700, n: 60, h: [[2, 0.05, 0.8]], width: 150, diff: 2, seed: 301, tunnels: 1 }),
+  weave('neon', 'Neon Nights', 'city', { kind: 'bean', bank: true, A: 1900, B: 1600, n: 36, width: 150, diff: 2, seed: 31, tunnels: 1 }),
+  weave('foundry', 'The Foundry', 'industrial', { kind: 'tre', A: 2300, B: 2300, n: 42, width: 150, diff: 2, seed: 311, tunnels: 1 }),
+  weave('inferno', 'Inferno Ring', 'volcano', { kind: 'f8', bank: true, A: 1850, B: 1750, n: 34, rot: 0.5, h: [[2, 0.07, 2.8]], width: 150, diff: 3, seed: 41, bridge: 76 }),
+  weave('seaside', 'Seaside Sprint', 'coast', { kind: 'lima', A: 2000, B: 1500, n: 36, rot: 0.3, width: 170, diff: 1, seed: 321, tunnels: 1 }),
+  weave('canyon', 'Canyon Carnage', 'mesa', { kind: 'chain', bank: true, A: 2600, B: 1700, n: 64, h: [[3, 0.05, 1]], width: 145, diff: 3, seed: 51, tunnels: 2 }),
+  weave('serpent', 'Serpent', 'desert', { kind: 'tre', A: 2400, B: 2000, n: 44, rot: 0.6, width: 150, diff: 3, seed: 331, tunnels: 1 }),
+  weave('timberline', 'Timberline Twist', 'forest', { kind: 'bean', bank: true, A: 2000, B: 1750, n: 40, rot: 1.0, h: [[3, 0.06, 2]], width: 145, diff: 3, seed: 61, tunnels: 1 }),
+  weave('glacier', 'Glacier Gauntlet', 'snow', { kind: 'chain', bank: true, A: 2700, B: 1500, n: 62, width: 150, diff: 2, seed: 71, tunnels: 1 }),
+  weave('midnight', 'Midnight Docks', 'industrial', { kind: 'f8', A: 1750, B: 1750, n: 34, rot: 1.2, h: [[2, 0.08, 2.4]], width: 150, diff: 2, seed: 81, bridge: 68 }),
+  weave('kingpin', 'Kingpin Circuit', 'city', { kind: 'tre', bank: true, A: 2500, B: 2200, n: 46, rot: 0.2, width: 155, diff: 4, seed: 91, tunnels: 1 }),
+  weave('lavaflow', 'Lava Flow', 'volcano', { kind: 'bean', bank: true, A: 2200, B: 1700, n: 40, rot: 2.0, width: 150, diff: 3, seed: 101, tunnels: 1 }),
   // ---- tracks with raised roads, crossovers, tunnels and hazards
   figure8('overpass', 'Overpass Chaos', 'city', { bank: true, A: 1750, B: 1560, n: 30, width: 150, diff: 3, seed: 111, bridge: 72, tags: ['flyover'] }),
   figure8('crossfire', 'Crossfire', 'warzone', { bank: true, A: 1850, B: 1500, n: 30, width: 155, diff: 3, seed: 121, bridge: 70, bomber: true, tags: ['flyover', 'air raid'] }),
   loop('tunnelvision', 'Tunnel Vision', 'mesa', { rx: 2050, ry: 1280, h: [[2, 0.14, 0.6], [3, 0.1, 2.0], [5, 0.04, 1]], n: 36, width: 150, diff: 3, seed: 131, tun: [[4, 8], [22, 25]], tags: ['tunnels'] }),
   loop('skyline', 'Skyline Highway', 'city', { bank: true, rx: 1900, ry: 1350, h: [[3, 0.11, 0.2], [5, 0.07, 1.5], [2, 0.1, 2.5]], n: 38, width: 160, diff: 3, seed: 141, elev: [[3, 9, 74], [24, 29, 74]], tun: [[16, 18]], tags: ['raised', 'tunnel'] }),
-  loop('groundzero', 'Ground Zero', 'warzone', { rx: 1800, ry: 1300, h: [[3, 0.12, 0.9], [2, 0.1, 2.2], [6, 0.03, 0.5]], n: 34, width: 150, diff: 3, seed: 151, bomber: true, tags: ['air raid'] }),
+  weave('groundzero', 'Ground Zero', 'warzone', { kind: 'lima', A: 1900, B: 1500, n: 36, rot: 1.0, width: 150, diff: 3, seed: 151, bomber: true, tags: ['air raid'] }),
   figure8('foundrycross', 'Foundry Crossing', 'industrial', { A: 1800, B: 1480, n: 30, width: 150, diff: 2, seed: 161, bridge: 66, wob: 0.06, tags: ['flyover', 'trains'] }),
   mountain('alpine', 'Alpine Ascent', 'snow', { Z: 260, legs: 4, R: 300, seed: 181 }),
   mountain('redsummit', 'Red Summit', 'mesa', { Z: 320, legs: 4, R: 330, legW: 1500, mirror: true, seed: 191 }),
@@ -112,7 +166,14 @@ export function generateTrack(seed, opts = {}) {
   for (let i = 0; i < nh; i++) { const k = ks.splice(Math.floor(rng() * ks.length), 1)[0]; h.push([k, (0.18 / Math.sqrt(k)) * (0.5 + rng() * 0.7), rng() * TAU]); }
   const NAMES_A = ['Savage', 'Rusted', 'Broken', 'Burning', 'Howling', 'Screaming', 'Cursed', 'Rotten', 'Iron', 'Crimson', 'Wicked', 'Hollow'];
   const NAMES_B = ['Gulch', 'Mile', 'Loop', 'Basin', 'Ridge', 'Ring', 'Pit', 'Crossing', 'Run', 'Mesa', 'Speedway', 'Hollow'];
-  const t = loop('gen' + seed, `${NAMES_A[Math.floor(rng() * 12)]} ${NAMES_B[Math.floor(rng() * 12)]}`, theme, { rx: 1700 + rng() * 500, ry: 1100 + rng() * 450, h, n: 34, width: 140 + Math.floor(rng() * 30), seed, rot: rng() * TAU });
+  const nm = `${NAMES_A[Math.floor(rng() * 12)]} ${NAMES_B[Math.floor(rng() * 12)]}`, rot = rng() * TAU, width = 140 + Math.floor(rng() * 30);
+  let t = null;
+  if (opts.plain !== true) { // most random circuits cross over themselves; fall back to a plain loop if the shape doesn't validate
+    const kinds = ['f8', 'chain', 'tre', 'lima', 'bean'], kind = kinds[Math.floor(rng() * kinds.length)], A = 1900 + rng() * 500, B = (kind === 'tre' ? A : 1500 + rng() * 300);
+    const c = weave('gen' + seed, nm, theme, { kind, A, B, n: kind === 'chain' ? 60 : kind === 'tre' ? 44 : 36, rot, width, seed, tunnels: rng() < 0.6 ? 1 : 0, h: [[3, 0.04 + rng() * 0.04, rng() * TAU]], bank: rng() < 0.5 });
+    if (validateTrack(compileTrack(c, { light: true })).ok) t = c;
+  }
+  if (!t) t = loop('gen' + seed, nm, theme, { rx: 1700 + rng() * 500, ry: 1100 + rng() * 450, h, n: 34, width, seed, rot });
   t.builtin = false; t.generated = true;
   return t;
 }
@@ -164,9 +225,16 @@ export function compileTrack(data, opts = {}) {
   for (let i = 0; i < N; i++) { const e = hw[i] + VERGE + 20; minX = Math.min(minX, x[i] - e); maxX = Math.max(maxX, x[i] + e); minY = Math.min(minY, y[i] - e); maxY = Math.max(maxY, y[i] + e); }
   const items0 = data.items || [];
   for (const it of items0) { minX = Math.min(minX, it.x - 60); maxX = Math.max(maxX, it.x + 60); minY = Math.min(minY, it.y - 60); maxY = Math.max(maxY, it.y + 60); }
-  const ox = MARGIN - minX, oy = MARGIN - minY;
+  let ox = MARGIN - minX, oy = MARGIN - minY;
+  let W = Math.ceil(maxX - minX + MARGIN * 2), H = Math.ceil(maxY - minY + MARGIN * 2);
+  // coastal maps (and any map with a tidal wave) get a real ocean along one edge of the world; the wave rolls in from it
+  let ocean = null;
+  if (data.theme === 'coast' || items0.some(it => it.t === 'wave')) {
+    const side = 'NESW'[(data.seed || hashStr(data.id || 'x')) % 4], D = OCEAN_D;
+    if (side === 'N') { oy += D; H += D; ocean = { side, s: D, ix: 0, iy: 1 }; } else if (side === 'S') { H += D; ocean = { side, s: H - D, ix: 0, iy: -1 }; }
+    else if (side === 'W') { ox += D; W += D; ocean = { side, s: D, ix: 1, iy: 0 }; } else { W += D; ocean = { side, s: W - D, ix: -1, iy: 0 }; }
+  }
   for (let i = 0; i < N; i++) { x[i] += ox; y[i] += oy; }
-  const W = Math.ceil(maxX - minX + MARGIN * 2), H = Math.ceil(maxY - minY + MARGIN * 2);
   // tangents / normals / curvature
   const tx = new Float32Array(N), ty = new Float32Array(N), ang = new Float32Array(N), curv = new Float32Array(N);
   for (let i = 0; i < N; i++) {
@@ -192,7 +260,7 @@ export function compileTrack(data, opts = {}) {
     elev[i] = z[i] >= ELEV_T ? 1 : 0; if (elev[i]) hasElev = true; if (tn[i]) hasTun = true;
   }
   const T = {
-    z, tn, wl, elev, hasElev, hasTun, tilt, grade, hazards: [], bomber: false,
+    z, tn, wl, elev, hasElev, hasTun, tilt, grade, hazards: [], bomber: false, ocean,
     data, id: data.id, name: data.name, theme: data.theme in THEMES ? data.theme : 'desert', th: null, N, step, length: total, x, y, hw, tx, ty, ang, curv, W, H, ox, oy,
     laps: data.laps || 3, seed: data.seed || hashStr(data.id || 'x'), start: null, props: [], items: [],
   };
@@ -209,6 +277,13 @@ export function compileTrack(data, opts = {}) {
   return T;
 }
 
+/** shoreline position (along the inward axis) for lateral coordinate c; wavy so the beach looks natural */
+export const shoreWob = c => 55 * Math.sin(c / 230) + 35 * Math.sin(c / 89 + 1.3);
+/** how far (px) a point is into the water: positive = at sea, negative = on land */
+export function oceanAt(T, x, y) {
+  const o = T.ocean; if (!o) return -1e9;
+  switch (o.side) { case 'N': return o.s + shoreWob(x) - y; case 'S': return y - (o.s + shoreWob(x)); case 'W': return o.s + shoreWob(y) - x; default: return x - (o.s + shoreWob(y)); }
+}
 /** Nearest centre-line point. hint>=0 searches a window (robust on tracks that pass close to themselves). */
 const _near = { i: 0, f: 0, d: 0, lat: 0, px: 0, py: 0, nx: 0, ny: 0 };
 export function nearest(T, px, py, hint = -1, win = 36, out = _near) {
@@ -264,7 +339,7 @@ function placeItems(T, custom) {
     }
     for (let tries = 0, placedO = 0; tries < 200 && placedO < 3; tries++) {
       const i = Math.floor(rng() * N);
-      if (i > 20 && i < N - 20 && !items.some(o => o.t === 'oil' && Math.hypot(o.x - T.x[i], o.y - T.y[i]) < 800)) {
+      if (i > N * 0.15 && i < N - 20 && !items.some(o => o.t === 'oil' && Math.hypot(o.x - T.x[i], o.y - T.y[i]) < 800)) {
         const p = pointAt(T, i, (rng() - 0.5) * T.hw[i] * 0.8); if (p.z < ELEV_T) { items.push({ t: 'oil', x: p.x, y: p.y, z: 0 }); placedO++; }
       }
     }
@@ -288,13 +363,15 @@ function placeHazards(T, custom) {
   const rng = mulberry32(T.seed ^ 0x2545f491), N = T.N, out = [];
   const th = THEME_HAZ[T.theme] || {};
   const flat = (i, span, lim) => { for (let q = -span; q <= span; q++) { const k = (i + q + N) % N; if (Math.abs(T.curv[k]) > lim || T.z[k] >= ELEV_T || T.tn[k]) return false; } return true; };
+  const underDeck = i => { for (let k = 0; k < N; k += 2) { const dk = Math.min(Math.abs(k - i), N - Math.abs(k - i)); if (dk > 30 && T.z[k] >= 40 && Math.hypot(T.x[k] - T.x[i], T.y[k] - T.y[i]) < 460) return true; } return false; };
   const far = (x, y, d, type) => !out.some(h => Math.hypot(h.x - x, h.y - y) < (h.t === type ? d : 520)) && !T.items.some(it => (it.t === 'boost' || it.t === 'oil') && Math.hypot(it.x - x, it.y - y) < 160);
   if (T.data.hazards !== false) for (const [type, count] of Object.entries(th)) {
     let placed = 0;
     for (let tries = 0; tries < 600 && placed < count; tries++) {
-      const i = Math.floor(N * (0.09 + rng() * 0.82));
+      const i = Math.floor(N * (0.14 + rng() * 0.78));
       const span = type === 'wave' ? 9 : type === 'train' ? 9 : type === 'cross' ? 6 : type === 'lava' ? 3 : 10, lim = type === 'lava' ? 0.01 : type === 'wave' || type === 'cross' ? 0.0011 : type === 'train' ? 0.0009 : 0.0007;
-      if (!flat(i, span, lim) || !far(T.x[i], T.y[i], type === 'cross' ? 1500 : type === 'train' ? 2200 : 1100, type)) continue;
+      if (!flat(i, span, lim) || underDeck(i) || !far(T.x[i], T.y[i], type === 'cross' ? 1500 : type === 'train' ? 2200 : 1100, type)) continue;
+      if (type === 'wave' && T.ocean) { const dist = -oceanAt(T, T.x[i], T.y[i]); if (dist < 500 || dist > 2700) continue; }
       const p = pointAt(T, i, 0); const hz = { t: type, x: p.x, y: p.y, a: p.a, hw: T.hw[i], f: i, seed: Math.floor(rng() * 1e6), side: rng() < 0.5 ? 1 : -1 }; if (type === 'train') { setupRail(T, hz); if (!hz.cr.length) continue; } out.push(hz); placed++;
     }
   }
@@ -304,6 +381,9 @@ function placeHazards(T, custom) {
     const onRoad = Math.abs(n.lat) < n.hw + 60;
     const hzc = { t: c.t, x: onRoad && c.t !== 'lava' && c.t !== 'wave' ? p.x : c.x, y: onRoad && c.t !== 'lava' && c.t !== 'wave' ? p.y : c.y, a: p.a, hw: n.hw, f: Math.floor(n.f), seed: ((c.x * 31 + c.y * 17) | 0) & 0xffff, side: n.lat >= 0 ? 1 : -1 }; if (c.t === 'train') { setupRail(T, hzc); if (!hzc.cr.length) hzc.cr = [{ x: hzc.x, y: hzc.y, u: 0, f: n.f, a: p.a, hw: n.hw, tx: Math.cos(p.a), ty: Math.sin(p.a), nx: -Math.sin(p.a), ny: Math.cos(p.a) }]; }
     out.push(hzc);
+  }
+  for (const h of out) if (h.t === 'wave') { // the wave travels from the ocean strip inland, perpendicular to the shore
+    if (T.ocean) { h.a = Math.atan2(-T.ocean.ix, T.ocean.iy); h.side = 1; h.R = Math.max(300, -oceanAt(T, h.x, h.y)) + 140; } else h.R = h.hw + 746;
   }
   if (T.data.bomber || (T.th.bomber && T.data.hazards !== false)) T.bomber = true;
   T.hazards = out.map((h, k) => ({ ...h, id: k }));
@@ -350,6 +430,7 @@ function placeProps(T, custom) {
     const big = ['tower', 'building', 'container', 'tank', 'adobe', 'mesa', 'cabin', 'crane', 'billboard', 'hut', 'ruin'].includes(type);
     const need = VERGE + 36 + (big ? 70 : 0);
     if (clearDist(px, py) < need) continue;
+    if (T.ocean && oceanAt(T, px, py) > -80) continue;
     if (T.hazards.some(h => h.t === 'train' && Math.abs((px - h.x) * -h.ry + (py - h.y) * h.rx) < 135 + (big ? 130 : 0))) continue;
     const pk = Math.floor(px / 70) + Math.floor(py / 70) * 400; const q = placedGrid.get(pk);
     if (q && Math.hypot(q.x - px, q.y - py) < (big ? 120 : 34)) continue;

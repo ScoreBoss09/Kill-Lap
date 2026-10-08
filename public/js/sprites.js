@@ -1,6 +1,7 @@
 // Pseudo-3D sprite drawing. Everything with height is projected with a simple perspective term so that
 // tall things lean away from the screen centre, giving the classic angled top-down look.
 import { shade, rgba, TAU, mulberry32, clamp } from './util.js';
+import Tex from './textures.js';
 
 export const PERSP = 0.0011;
 
@@ -48,6 +49,7 @@ export function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
     }
   }
   g.fillStyle = colRoof; g.beginPath(); top.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.fill();
+  if (opts.roof && v.quality > 0) { const pat = Tex.world(v, 'roof', opts.roof); if (pat) { g.save(); g.imageSmoothingEnabled = false; g.globalAlpha = 0.82; g.fillStyle = pat; g.fill(); g.restore(); } }
   g.strokeStyle = shade(colRoof, -0.3); g.lineWidth = Math.max(1, v.zoom); g.stroke();
   return top;
 }
@@ -136,7 +138,7 @@ export function drawProp(g, v, p, th, t) {
     case 'adobe': case 'cabin': case 'building': case 'hut': case 'tower': {
       const [wc, rc] = WALLCOL[p.type]; const night = th.night;
       const rot = Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2) + (p.v - 0.5) * 0.2;
-      box(g, v, x, y, p.w * (p.type === 'hut' ? 0.5 : 1), p.d * (p.type === 'hut' ? 0.5 : 1), p.type === 'hut' ? 38 : p.h, rot, shade(wc, ((p.v * 7) % 1 - 0.5) * 0.3), rc, { windows: night ? '#ffe9a0' : (p.type === 'building' || p.type === 'tower' ? 'rgba(160,200,230,0.65)' : null) });
+      box(g, v, x, y, p.w * (p.type === 'hut' ? 0.5 : 1), p.d * (p.type === 'hut' ? 0.5 : 1), p.type === 'hut' ? 38 : p.h, rot, shade(wc, ((p.v * 7) % 1 - 0.5) * 0.3), rc, { roof: p.type === 'adobe' || p.type === 'hut' ? 'red' : p.type === 'building' || p.type === 'tower' ? 'grey' : null, windows: night ? '#ffe9a0' : (p.type === 'building' || p.type === 'tower' ? 'rgba(160,200,230,0.65)' : null) });
       break;
     }
     case 'container': {
@@ -229,7 +231,7 @@ export function drawItem(g, v, it, t) {
 function rr(g, x, y, w, h, r) { g.beginPath(); g.roundRect(x, y, w, h, r); }
 /** draw one layer of a car in local space at height h (car faces +x) */
 function layer(g, v, c, h, fn) {
-  h += c.z || 0;
+  h += (c.z || 0) + (c.rampZ || 0);
   const s = v.scale(h), cs = Math.cos(c.a), sn = Math.sin(c.a);
   g.save(); g.setTransform(s * cs, s * sn, -s * sn, s * cs, v.px(c.x, c.y, h), v.py(c.x, c.y, h)); fn(); g.restore();
 }

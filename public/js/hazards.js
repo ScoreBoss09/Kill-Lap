@@ -66,7 +66,7 @@ export class Hazards {
   updateTrain(h, t, near, dt) {
     const s = this.trainState(h, t), g = this.game; h.s = s; let anyWarn = false;
     for (const c of h.cr) { // every crossing warns on its own schedule: lights + bell as the train approaches, arms down until it has passed
-      const arrive = 2 + (c.u - h.s0) / TRAIN_SPEED, clear = arrive + (TRAIN_LEN + 120) / TRAIN_SPEED;
+      const arrive = 2 + (c.u - h.s0) / TRAIN_SPEED, clear = arrive + (TRAIN_LEN + 120) / TRAIN_SPEED; c.arrive = arrive; c.clear = clear; c.ph = s.ph;
       c.warn = s.ph >= arrive - 6 && s.ph < clear + 1.2; c.arms = s.ph >= arrive - 5 && s.ph < clear + 0.6 ? clamp(Math.min(s.ph - (arrive - 5), clear + 0.6 - s.ph) * 1.4, 0, 1) : 0; anyWarn = anyWarn || c.warn;
       if (c.warn) { const b = Math.floor(s.ph * 2); if (b !== c.lastBell) { c.lastBell = b; if (near(c.x, c.y, 1400)) g.snd('bell', c.x, c.y, 0.8); } }
       if (s.head != null && !c.horned && s.head > c.u - 1500 && s.head < c.u) { c.horned = true; if (near(c.x, c.y, 2400)) g.snd('horn', c.x, c.y, 1); }
@@ -126,8 +126,11 @@ export class Hazards {
   updateJump(h) {
     const g = this.game;
     for (const c of g.cars) {
-      if (!c.local || c.dead || c.zAir > 1) continue; const rx = c.x - h.x, ry = c.y - h.y, u = rx * h.tx + ry * h.ty, w = rx * h.nx + ry * h.ny, sp = Math.hypot(c.vx, c.vy);
-      if (u > -34 && u < 40 && Math.abs(w) < 62 && sp > 150 && (c.vx * h.tx + c.vy * h.ty) / (sp || 1) > 0.45) { c.vz = 90 + sp * 0.34; c.zAir = 0.5; g.snd('boost', c.x, c.y, 0.6, 1.4); if (c.human) { g.hudFlash = 0.2; Input.rumble(0.5, 0.2, 100); } }
+      if (c.dead) continue; const rx = c.x - h.x, ry = c.y - h.y, u = rx * h.tx + ry * h.ty, w = rx * h.nx + ry * h.ny, sp = Math.hypot(c.vx, c.vy);
+      const on = Math.abs(w) < 56 && u > -46 && u < 46 && (c.zAir || 0) < 1; // visibly riding up the ramp wedge (24 high)
+      if (on) { c.rampZ = 24 * clamp((u + 46) / 92, 0, 1); c.rampOwner = h.id; } else if (c.rampOwner === h.id) { c.rampZ = 0; c.rampOwner = null; }
+      if (!c.local || c.zAir > 1) continue;
+      if (u > 22 && u < 62 && Math.abs(w) < 62 && sp > 150 && (c.vx * h.tx + c.vy * h.ty) / (sp || 1) > 0.45) { c.vz = 90 + sp * 0.34; c.zAir = 0.5; c.rampZ = 0; g.snd('boost', c.x, c.y, 0.6, 1.4); if (c.human) { g.hudFlash = 0.2; Input.rumble(0.5, 0.2, 100); } }
     }
   }
 
@@ -146,14 +149,14 @@ export class Hazards {
   }
 
   /* ---------------------------------------------------------------- tidal wave */
-  waveFront(h, t) { const ph = (t + h.off) % h.P; if (ph < 4) return null; const R = h.hw + 46 + 700, s = -R + WAVE_SPEED * (ph - 4); return s > R + 200 ? null : s; }
+  waveFront(h, t) { const ph = (t + h.off) % h.P; if (ph < 4) return null; const R = h.R, s = -R + WAVE_SPEED * (ph - 4); return s > h.hw + 420 ? null : s; }
   updateWave(h, t, near, dt) {
     const g = this.game, ph = (t + h.off) % h.P, s = this.waveFront(h, t), side = h.side || 1; const dx = h.nx * side, dy = h.ny * side;
     if (ph < 4 && ph + dt > 0 && Math.floor((t + h.off) / h.P) !== h.lastK) { h.lastK = Math.floor((t + h.off) / h.P); if (this.game.human && near(h.x, h.y, 2600)) { g.msg('TIDAL WAVE!', 2, '#5fd0ff'); Audio.sfx('siren', { vol: 0.6 }); } }
     if (s == null) return ph < 4 && near(h.x, h.y, 1500);
     for (const c of g.cars) {
       if (!c.local || c.dead || (c.z || 0) > 12) continue; const rx = c.x - h.x, ry = c.y - h.y, u = rx * h.tx + ry * h.ty, w = rx * dx + ry * dy;
-      if (Math.abs(u) > 400) continue;
+      if (Math.abs(u) > 1500) continue;
       if (w > s - 75 && w < s + 75) { c.waterT = 0.25; c.vx += dx * 520 * dt; c.vy += dy * 520 * dt; if (Math.random() < 0.7) g.fx.smoke(c.x, c.y, dx * 120 + (Math.random() - 0.5) * 120, dy * 120 + (Math.random() - 0.5) * 120, 7, 0.6, '210,235,250', 0.6); if (!c.wetHit) { c.wetHit = true; g.snd('splash', c.x, c.y, 0.9); } }
       else if (w <= s - 75 && w > s - 280) { c.waterT = 0.2; if (Math.random() < 0.2) g.fx.smoke(c.x, c.y, (Math.random() - 0.5) * 60, (Math.random() - 0.5) * 60, 5, 0.5, '190,225,245', 0.4); } else c.wetHit = false;
     }
@@ -182,7 +185,15 @@ export class Hazards {
   /* ---------------------------------------------------------------- AI hooks */
   /** true if a bot should hold (stop short of a crossing with a train coming) */
   holdFor(c) {
-    for (const h of this.list) if (h.t === 'train' && h.cr) for (const x of h.cr) if (x.warn) { const d = (x.f - c.pos + this.T.N) % this.T.N; if (d > 1 && d < 34) return true; }
+    const N = this.T.N, step = this.T.step, sp = Math.hypot(c.vx, c.vy);
+    for (const h of this.list) if (h.t === 'train' && h.cr) for (const x of h.cr) {
+      if (x.arrive == null) continue; const dd = (x.f - c.pos + N) % N; if (dd < 1.6 || dd > N / 2) continue; // on the rails already (keep moving) or the crossing is behind
+      const dist = dd * step, eta = dist / Math.max(sp, 140), ph = x.ph, start = x.arrive - 1.1 - ph, end = x.clear + 0.5 - ph;
+      if (end <= 0) continue; // train already gone
+      const clearsFirst = start > 0 && eta + 0.9 < start; // we can be across before the train shows up
+      if (clearsFirst) continue;
+      if (dist - 70 < sp * sp / 1050 + 40) return true; // inside braking distance of the barrier: stop short of it
+    }
     return false;
   }
   slowFor(c) { for (const h of this.list) if (h.t === 'cross' && h.peds && h.peds.length) { const d = (h.f - c.pos + this.T.N) % this.T.N; if (d > 0 && d < 24) return true; } return false; }
@@ -191,9 +202,9 @@ export class Hazards {
   drawGround(g, v, time) {
     for (const h of this.list) {
       if (h.t === 'train') { this.drawRails(g, v, h, time); continue; }
-      if (!v.visible(h.x, h.y, h.t === 'wave' ? 1400 : 220)) continue;
+      if (h.t !== 'wave' && !v.visible(h.x, h.y, 220)) continue;
       if (false) 0; else if (h.t === 'cross') this.drawCrosswalk(g, v, h); else if (h.t === 'ford') this.drawFord(g, v, h, time);
-      else if (h.t === 'lava') this.drawLavaGlow(g, v, h, time); else if (h.t === 'wave') this.drawWave(g, v, h, time);
+      else if (h.t === 'jump') this.drawRamp(g, v, h); else if (h.t === 'lava') this.drawLavaGlow(g, v, h, time); else if (h.t === 'wave') this.drawWave(g, v, h, time);
     }
     if (this.hasBomber) this.drawBombMarkers(g, v, time);
     // flattened pedestrians' bodies in flight
@@ -246,12 +257,14 @@ export class Hazards {
     const s = this.waveFront(h, this.t); const ph = (this.t + h.off) % h.P; const side = h.side || 1, dx = h.nx * side, dy = h.ny * side;
     const P = (u, w) => [v.sx(h.x + dx * u + h.tx * w), v.sy(h.y + dy * u + h.ty * w)];
     if (s == null) { if (ph < 4) { // calm warning: a foamy line far out at sea
-        const R = h.hw + 46 + 700; g.strokeStyle = `rgba(230,245,255,${0.25 + 0.2 * Math.sin(time * 6)})`; g.lineWidth = 4 * v.zoom; g.beginPath(); for (let w = -400; w <= 400; w += 40) { const [x, y] = P(-R, w); w === -400 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke(); } return; }
-    const back = 280, front = 80;
+        const R = h.R; g.strokeStyle = `rgba(230,245,255,${0.25 + 0.2 * Math.sin(time * 6)})`; g.lineWidth = 4 * v.zoom; g.beginPath(); for (let w = -1500; w <= 1500; w += 40) { const [x, y] = P(-R, w); w === -1500 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke(); } return; }
+    const back = 280, front = 80, W2 = 1500, fade = clamp((h.hw + 420 - s) / 320, 0.15, 1); g.save(); g.globalAlpha = fade;
     const grad = g.createLinearGradient(...P(s - back, 0), ...P(s + front, 0)); grad.addColorStop(0, 'rgba(60,150,190,0)'); grad.addColorStop(0.35, 'rgba(60,150,195,0.4)'); grad.addColorStop(0.9, 'rgba(40,130,185,0.72)'); grad.addColorStop(1, 'rgba(200,235,250,0.85)');
-    g.fillStyle = grad; g.beginPath(); for (const [u, w] of [[s - back, -420], [s + front, -420]]) { const [x, y] = P(u, w); g.lineTo(x, y); } for (const [u, w] of [[s + front, 420], [s - back, 420]]) { const [x, y] = P(u, w); g.lineTo(x, y); } g.closePath(); g.fill();
-    g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 6 * v.zoom; g.lineJoin = 'round'; g.beginPath(); for (let w = -420; w <= 420; w += 18) { const [x, y] = P(s + front - 8 + Math.sin(w * 0.07 + time * 8) * 9, w); w === -420 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke();
-    g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 3 * v.zoom; for (let k = 1; k < 4; k++) { g.beginPath(); for (let w = -420; w <= 420; w += 24) { const [x, y] = P(s + front - 40 * k + Math.sin(w * 0.05 + time * 6 + k) * 8, w); w === -420 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke(); }
+    g.fillStyle = grad; g.beginPath(); for (const [u, w] of [[s - back, -W2], [s + front, -W2]]) { const [x, y] = P(u, w); g.lineTo(x, y); } for (const [u, w] of [[s + front, W2], [s - back, W2]]) { const [x, y] = P(u, w); g.lineTo(x, y); } g.closePath(); g.fill();
+    { const wp = Tex.world(v, 'water', null, time * 46, time * 18); if (wp) { g.save(); g.imageSmoothingEnabled = false; g.globalAlpha = 0.4; g.fillStyle = wp; g.fill(); g.restore(); } }
+    g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 6 * v.zoom; g.lineJoin = 'round'; g.beginPath(); for (let w = -W2; w <= W2; w += 18) { const [x, y] = P(s + front - 8 + Math.sin(w * 0.07 + time * 8) * 9, w); w === -W2 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke();
+    g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 3 * v.zoom; for (let k = 1; k < 4; k++) { g.beginPath(); for (let w = -W2; w <= W2; w += 24) { const [x, y] = P(s + front - 40 * k + Math.sin(w * 0.05 + time * 6 + k) * 8, w); w === -W2 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke(); }
+    g.restore();
   }
   drawBombMarkers(g, v, time) {
     for (const run of this.runs) {
@@ -267,7 +280,6 @@ export class Hazards {
       if (h.t === 'train') { for (const c of h.cr) { if (!v.visible(c.x, c.y, 260)) continue; c.s = { warn: c.warn, arms: c.arms }; for (const s of [-1, 1]) { const py = c.y + c.ty * s * 34 + c.ny * s * (c.hw + 24); list.push({ y: py + 6, k: 3, fn: (g, vv, t) => this.drawSignal(g, vv, c, s, t) }); } } continue; }
       if (!v.visible(h.x, h.y, 260)) continue;
       if (h.t === 'cross') { for (const s of [-1, 1]) list.push({ y: h.y + h.ny * s * (h.hw + 34), k: 3, fn: (g, vv, t) => this.drawPedLight(g, vv, h, s, t) }); for (const p of h.peds || []) list.push({ y: p.y, k: 3, fn: (g, vv, t) => this.drawPed(g, vv, p, t, false) }); }
-      else if (h.t === 'jump') list.push({ y: h.y + 20, k: 3, fn: (g, vv) => this.drawRamp(g, vv, h) });
       else if (h.t === 'ford') { for (const sd of [-1, 1]) { const px = h.x + h.tx * -105 + h.nx * sd * (h.hw + 26), py = h.y + h.ty * -105 + h.ny * sd * (h.hw + 26); list.push({ y: py, k: 3, fn: (g, vv) => this.drawWarnSign(g, vv, px, py, '≈') }); } }
     }
   }

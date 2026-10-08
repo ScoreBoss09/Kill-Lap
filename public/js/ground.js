@@ -1,7 +1,7 @@
 // Tiled, lazily-baked terrain renderer. Tiles are drawn from the vector track description on demand,
 // so very large worlds cost only the memory of tiles the cars actually visit. Skid marks / scorch marks
 // are stamped straight into the tiles.
-import { VERGE, pointAt } from './tracks.js';
+import { VERGE, pointAt, shoreWob } from './tracks.js';
 import { mulberry32, shade, rgba, TAU, hashStr } from './util.js';
 import Tex from './textures.js';
 
@@ -126,6 +126,7 @@ export class Ground {
     }
     if (q >= 1) { g.fillStyle = noisePattern(g, 'light'); g.fillRect(ox, oy, TS, TS); g.fillStyle = noisePattern(g, 'dark'); g.fillRect(ox, oy, TS, TS); }
     this.terrainFeatures(g, ox, oy, C);
+    if (T.ocean) this.paintSea(g, ox, oy);
     // verge
     this.ringPath(g, 0, 'v'); g.fillStyle = th.verge; g.fill(this.fillRule);
     { const vt = Tex.get('verge', T.theme); if (vt) { g.globalAlpha = 0.9; g.fillStyle = vt; g.fill(this.fillRule); g.globalAlpha = 1; } }
@@ -190,6 +191,36 @@ export class Ground {
       g.strokeStyle = th.wallTop; g.lineWidth = 7; g.beginPath(); this.edge(g, side, 'w'); g.stroke();
     }
     g.restore();
+  }
+
+  /** shoreline point for lateral coordinate c, pushed `off` px inland (negative = out to sea) */
+  shoreXY(c, off = 0) { const o = this.T.ocean, p = o.s + shoreWob(c) + (o.side === 'N' || o.side === 'W' ? 1 : -1) * off; return o.side === 'N' || o.side === 'S' ? [c, p] : [p, c]; }
+  paintSea(g, ox, oy) {
+    const T = this.T, o = T.ocean, th = T.th, horiz = o.side === 'N' || o.side === 'S', lo = (horiz ? ox : oy) - 40, hi = (horiz ? ox + TS : oy + TS) + 40;
+    const a0 = horiz ? oy : ox; const inl = o.side === 'N' || o.side === 'W'; // water lies on the low side for N/W
+    if (inl ? a0 > o.s + 140 : a0 + TS < o.s - 140) return;
+    const line = (off, from, to, st = 24) => { const out = []; for (let c = from; c <= to; c += st) out.push(this.shoreXY(c, off)); return out; };
+    const trace = (pts, close) => { g.beginPath(); pts.forEach(([x, y], k) => k ? g.lineTo(x, y) : g.moveTo(x, y)); };
+    const shore = line(0, lo, hi); const far = shore.map(([x, y]) => [x - o.ix * 3000, y - o.iy * 3000]).reverse();
+    g.save(); trace(shore.concat(far)); g.closePath(); g.clip();
+    g.fillStyle = '#0f4468'; g.fillRect(ox - 40, oy - 40, TS + 80, TS + 80);
+    const cols = ['#185a82', '#1f6d96', '#2582a9', '#2d8fb5', '#3aa5c8', '#5cc4d6', '#8fe3e0']; g.lineJoin = 'round'; g.lineCap = 'round';
+    for (let k = 0; k < cols.length; k++) { const off = -(cols.length - 1 - k) * 80 - 24; g.strokeStyle = cols[k]; g.lineWidth = 110; trace(line(off, lo - 150, hi + 150)); g.globalAlpha = 0.9; g.stroke(); }
+    g.globalAlpha = 1; const wt = Tex.get('water', T.theme); if (wt) { g.imageSmoothingEnabled = false; g.globalAlpha = 0.28; g.fillStyle = wt; g.fillRect(ox - 40, oy - 40, TS + 80, TS + 80); g.globalAlpha = 1; }
+    g.restore();
+    g.save(); g.lineJoin = 'round'; trace(line(26, lo, hi)); g.strokeStyle = rgba('#8a7440', 0.3); g.lineWidth = 46; g.stroke(); // wet sand
+    trace(line(0, lo, hi)); g.strokeStyle = 'rgba(255,255,255,0.8)'; g.lineWidth = 5; g.stroke(); g.restore();
+  }
+  /** animated surf and swell, drawn over the baked sea every frame */
+  drawSea(g, v, time) {
+    const T = this.T, o = T.ocean; if (!o) return; const W = v.W, H = v.H, vw = W / v.zoom, vh = H / v.zoom, horiz = o.side === 'N' || o.side === 'S';
+    const a = horiz ? v.y : v.x, ext = (horiz ? vh : vw) / 2 + 160; const water = o.side === 'N' || o.side === 'W' ? a - ext < o.s + 120 : a + ext > o.s - 120; if (!water) return;
+    const from = (horiz ? v.x - vw / 2 : v.y - vh / 2) - 100, to = (horiz ? v.x + vw / 2 : v.y + vh / 2) + 100;
+    const path = (off, wig, ph) => { g.beginPath(); let k = 0; for (let c = Math.floor(from / 36) * 36; c <= to; c += 36, k++) { const [x, y] = this.shoreXY(c, off + Math.sin(c * 0.03 + ph) * wig); k ? g.lineTo(v.sx(x), v.sy(y)) : g.moveTo(v.sx(x), v.sy(y)); } };
+    g.save(); g.lineJoin = 'round'; g.lineCap = 'round';
+    for (let k = 0; k < 4; k++) { const ph = (time * 0.2 + k / 4) % 1, off = -(12 + (1 - ph) * 210); path(off, 6, time * 1.5 + k); g.strokeStyle = `rgba(235,250,255,${Math.sin(ph * Math.PI) * 0.45})`; g.lineWidth = (2 + ph * 3) * v.zoom; g.stroke(); }
+    const wash = Math.sin(time * 1.3) * 10; path(wash - 4, 8, time * 0.8); g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = 7 * v.zoom; g.stroke();
+    path(wash + 8, 5, time * 0.6 + 2); g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = 12 * v.zoom; g.stroke(); g.restore();
   }
 
   terrainFeatures(g, ox, oy, C) {

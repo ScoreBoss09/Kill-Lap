@@ -671,6 +671,7 @@ export class Game {
     // bake terrain around the view (budgeted)
     this.ground.ensure(v.x - vw / 2 - 256, v.y - vh / 2 - 256, v.x + vw / 2 + 256, v.y + vh / 2 + 256, 2);
     this.ground.draw(g, v.x - 0 + v.shakeX / v.zoom, v.y + v.shakeY / v.zoom, v.zoom, W, H);
+    if (T.ocean) this.ground.drawSea(g, v, this.time);
     // night
     if (this.night) {
       g.fillStyle = 'rgba(4,6,22,0.55)'; g.fillRect(0, 0, W, H);
