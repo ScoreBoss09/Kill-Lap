@@ -1,4 +1,5 @@
 // DOM menu system with keyboard / mouse / gamepad navigation.
+import { BUILD } from './build.js';
 import Audio from './audio.js';
 import Input, { ACTIONS } from './input.js';
 import Store, { SERIES, POINTS, ACHIEVEMENTS } from './storage.js';
@@ -218,6 +219,7 @@ S.title = (ctx) => {
     h('div', { class: 'side' },
       h('div', { class: 'panel' }, h('div', { class: 'pname' }, d.name), h('div', { class: 'pcash' }, fmtMoney(d.cash)), h('div', { class: 'small' }, `${d.stats.races} races · ${d.stats.wins} wins · ${d.stats.kills} kills`), careerLine(d)),
       btn('🏆 ACHIEVEMENTS', () => UI.go('achievements'), 'ghost'), btn('🎮 CONTROLS', () => UI.go('controls'), 'ghost'), btn('ℹ CREDITS', () => UI.go('credits'), 'ghost')),
+    h('div', { class: 'build-tag' }, 'build ' + BUILD + (d.freshBuild ? ' · new build - progress reset' : '')),
     hint());
   return el;
 };

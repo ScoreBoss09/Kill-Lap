@@ -184,17 +184,22 @@ export class Hazards {
 
   /* ---------------------------------------------------------------- AI hooks */
   /** true if a bot should hold (stop short of a crossing with a train coming) */
-  holdFor(c) {
+  /** Max speed a bot allows itself near a level crossing. Every driver judges the train their own way: bold ones floor it (and sometimes
+   *  get hit), timid ones ease off to let it pass, most simply time their run. Nobody parks at the barrier. */
+  trainCap(c, top) {
     const N = this.T.N, step = this.T.step, sp = Math.hypot(c.vx, c.vy);
+    if (c.nerve == null) c.nerve = clamp(0.12 + (c.aggr || 1) * 0.42 + ((c.slot * 0.6180339) % 1) * 0.36, 0, 1);
+    const nerve = c.nerve; let cap = Infinity;
     for (const h of this.list) if (h.t === 'train' && h.cr) for (const x of h.cr) {
-      if (x.arrive == null) continue; const dd = (x.f - c.pos + N) % N; if (dd < 1.6 || dd > N / 2) continue; // on the rails already (keep moving) or the crossing is behind
-      const dist = dd * step, eta = dist / Math.max(sp, 140), ph = x.ph, start = x.arrive - 1.1 - ph, end = x.clear + 0.5 - ph;
-      if (end <= 0) continue; // train already gone
-      const clearsFirst = start > 0 && eta + 0.9 < start; // we can be across before the train shows up
-      if (clearsFirst) continue;
-      if (dist - 70 < sp * sp / 1050 + 40) return true; // inside braking distance of the barrier: stop short of it
+      if (x.arrive == null) continue; const dd = (x.f - c.pos + N) % N; if (dd < 2 || dd > 70) continue;
+      const dist = dd * step, ph = x.ph, toArrive = x.arrive - ph, toClear = x.clear + 0.3 - ph; if (toClear <= 0 || toArrive > 10) continue;
+      const eta = dist / Math.max(sp, 120), crossT = 170 / Math.max(sp, 120), margin = 1.0 - nerve * 0.8;
+      if (eta + crossT < toArrive - margin) continue;               // plenty of time: carry on at full speed
+      if (nerve > 0.8 && eta < toArrive + 0.6 && toArrive > 0) continue; // daredevil: go for it
+      if (dist < 90 && toArrive < 0.6 && toClear > 0.5 && nerve < 0.9) { cap = Math.min(cap, 40); continue; } // train is right there: crawl, never ram it
+      const v = clamp(dist / Math.max(toClear, 0.4), 55, top); cap = Math.min(cap, v * (0.9 + nerve * 0.25)); // ease off so we arrive just after it has gone
     }
-    return false;
+    return cap;
   }
   slowFor(c) { for (const h of this.list) if (h.t === 'cross' && h.peds && h.peds.length) { const d = (h.f - c.pos + this.T.N) % this.T.N; if (d > 0 && d < 24) return true; } return false; }
 
@@ -338,12 +343,12 @@ export class Hazards {
   drawTrain(g, v, h) {
     const s = h.s, parts = [{ len: 112, h: 42, w: 40, c: '#2b3a55', r: '#4a5f88', loco: true }]; for (let k = 0; k < 5; k++) parts.push({ len: 100, h: 34, w: 38, c: ['#8a3a2a', '#3a5a8a', '#7a6a2a', '#4a6a4a', '#6a3a6a'][k], r: ['#a85a4a', '#5a7aaa', '#9a8a4a', '#6a8a6a', '#8a5a8a'][k] });
     const items = []; let off = s.head;
-    for (const p of parts) { const u = off - p.len / 2; items.push({ x: h.x + h.nx * u, y: h.y + h.ny * u, p }); off -= p.len + 8; }
+    for (const p of parts) { const u = off - p.len / 2; items.push({ x: h.x + h.rx * u, y: h.y + h.ry * u, p }); off -= p.len + 8; }
     items.sort((a, b) => a.y - b.y);
     for (const it of items) {
-      if (!v.visible(it.x, it.y, 130)) continue; const rot = Math.atan2(h.ny, h.nx);
+      if (!v.visible(it.x, it.y, 130)) continue; const rot = Math.atan2(h.ry, h.rx);
       box(g, v, it.x, it.y, it.p.len, it.p.w, it.p.h, rot, it.p.c, it.p.r, {});
-      if (it.p.loco) { const hx = it.x + h.nx * (it.p.len / 2), hy = it.y + h.ny * (it.p.len / 2); g.save(); g.globalCompositeOperation = 'lighter'; const X = v.px(hx, hy, 24), Y = v.py(hx, hy, 24), gr = g.createRadialGradient(X, Y, 0, X, Y, 50 * v.zoom); gr.addColorStop(0, 'rgba(255,245,200,0.9)'); gr.addColorStop(1, 'rgba(255,245,200,0)'); g.fillStyle = gr; g.beginPath(); g.arc(X, Y, 50 * v.zoom, 0, TAU); g.fill(); g.restore(); }
+      if (it.p.loco) { const hx = it.x + h.rx * (it.p.len / 2), hy = it.y + h.ry * (it.p.len / 2); g.save(); g.globalCompositeOperation = 'lighter'; const X = v.px(hx, hy, 24), Y = v.py(hx, hy, 24), gr = g.createRadialGradient(X, Y, 0, X, Y, 50 * v.zoom); gr.addColorStop(0, 'rgba(255,245,200,0.9)'); gr.addColorStop(1, 'rgba(255,245,200,0)'); g.fillStyle = gr; g.beginPath(); g.arc(X, Y, 50 * v.zoom, 0, TAU); g.fill(); g.restore(); }
     }
   }
   drawPlane(g, v, time) {

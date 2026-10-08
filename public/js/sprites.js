@@ -273,7 +273,7 @@ export function drawCar(g, v, c, t, opts = {}) {
   const L = c.len, Wd = c.wid, col = c.color, hl = L / 2, hwid = Wd / 2;
   if (c.dead) return;
   const flash = c.invuln > 0 && Math.floor(t * 14) % 2 === 0;
-  if (flash) g.globalAlpha = 0.45;
+  if (flash) g.globalAlpha = 0.45; else if (opts.alpha != null) g.globalAlpha = opts.alpha;
   // shadow
   { const zr = c.zRoad || 0, air = c.zAir || 0, sc = v.scale(zr); g.save(); g.setTransform(sc * Math.cos(c.a), sc * Math.sin(c.a), -sc * Math.sin(c.a), sc * Math.cos(c.a), v.px(c.x, c.y, zr) + (7 + air * 0.35) * v.zoom, v.py(c.x, c.y, zr) + (9 + air * 0.3) * v.zoom); g.fillStyle = `rgba(0,0,0,${0.34 / (1 + air / 60)})`; rr(g, -hl - 1, -hwid - 1, L + 2, Wd + 2, 7); g.fill(); g.restore(); }
   // night headlights

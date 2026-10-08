@@ -28,6 +28,7 @@ export function drawWalls(g, v, T, vis) {
   for (const i of vis) {
     const j = (i + 1) % N; if (T.elev[i] || T.elev[j]) continue;
     for (const s of [-1, 1]) {
+      if (T.wallGap && (T.wallGap[i] | T.wallGap[j]) & (s < 0 ? 1 : 2)) continue; // level crossing
       const li = s * (T.hw[i] + T.wl[i] - 1), lj = s * (T.hw[j] + T.wl[j] - 1);
       const [xi, yi] = pt(T, i, li), [xj, yj] = pt(T, j, lj), [oi, pi] = pt(T, i, li + s * 11), [oj, pj] = pt(T, j, lj + s * 11);
       const bi = [v.px(xi, yi, 0), v.py(xi, yi, 0)], bj = [v.px(xj, yj, 0), v.py(xj, yj, 0)], ti = [v.px(xi, yi, WALL_H), v.py(xi, yi, WALL_H)], tj = [v.px(xj, yj, WALL_H), v.py(xj, yj, WALL_H)];
@@ -112,11 +113,13 @@ export function tunnelRuns(T) {
   let i = st, cnt = 0; while (cnt < N) { if (T.tn[i]) { const idx = []; while (cnt < N && T.tn[i]) { idx.push(i); i = (i + 1) % N; cnt++; } runs.push(idx); } else { i = (i + 1) % N; cnt++; } }
   return runs;
 }
-export function drawTunnels(g, v, T, vis) {
+export function drawTunnels(g, v, T, vis, focus = -1) {
   const runs = tunnelRuns(T); if (!runs.length) return; const th = T.th, N = T.N, near = new Set(vis);
   const rock = [shade(th.wall, -0.2), shade(th.wall, -0.27), shade(th.wall, -0.14), shade(th.wall, -0.23)];
-  const rockP = Tex.world(v, 'rock', T.theme); g.save(); g.globalAlpha = 0.93;
+  const rockP = Tex.world(v, 'rock', T.theme); g.save();
   for (const idx of runs) {
+    // the hill turns see-through while you are inside it, so the road and every car underneath stay visible
+    let runA = 0.94; if (focus >= 0 && idx.some(q => Math.min(Math.abs(q - focus), N - Math.abs(q - focus)) < 20)) runA = 0.34; g.globalAlpha = runA;
     for (let k = 0; k < idx.length - 1; k++) {
       const i = idx[k], j = idx[k + 1]; if (!near.has(i) && !near.has(j)) continue;
       const hi = T.hw[i] + 56, hj = T.hw[j] + 56; const P = (q, lat, z) => { const [x, y] = pt(T, q, lat); return [v.px(x, y, z), v.py(x, y, z)]; };
@@ -125,7 +128,7 @@ export function drawTunnels(g, v, T, vis) {
       if (camLat > hi) quad(P(i, hi, 0), P(j, hj, 0), P(j, hj, TUN_H * 0.8), P(i, hi, TUN_H * 0.8), shade(th.wall, -0.45));
       if (camLat < -hi) quad(P(i, -hi, 0), P(j, -hj, 0), P(j, -hj, TUN_H * 0.8), P(i, -hi, TUN_H * 0.8), shade(th.wall, -0.45));
       // hill profile: rounded top built from lit strips (light from the top-left)
-      const strip = (l0, l1, h0, h1, col) => { g.globalAlpha = 0.93; texQuad(g, P(i, l0 * hi, h0), P(j, l0 * hj, h0), P(j, l1 * hj, h1), P(i, l1 * hi, h1), rockP, col, 0.45); g.globalAlpha = 0.93; };
+      const strip = (l0, l1, h0, h1, col) => { g.globalAlpha = runA; texQuad(g, P(i, l0 * hi, h0), P(j, l0 * hj, h0), P(j, l1 * hj, h1), P(i, l1 * hi, h1), rockP, col, 0.45); g.globalAlpha = runA; };
       const prof = [[-1, 0.8], [-0.82, 0.93], [-0.5, 0.99], [0, 1], [0.5, 0.99], [0.82, 0.93], [1, 0.8]], lit = [-0.24, -0.12, 0.02, 0.1, -0.02, -0.14, -0.28];
       const base = rock[((i >> 4) * 3) % rock.length];
       for (let q = 0; q < prof.length - 1; q++) strip(prof[q][0], prof[q + 1][0], TUN_H * prof[q][1], TUN_H * prof[q + 1][1], shade(base, (lit[q] + lit[q + 1]) / 2 + 0.02 + (((i * 2654435761) >>> 28) / 15 - 0.5) * 0.03));

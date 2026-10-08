@@ -22,6 +22,10 @@ Double-click **`play.bat`** (Windows) or run **`./play.sh`** (Mac/Linux) to star
 
 Tip: press **F11** for fullscreen, or use *Settings -> Toggle fullscreen*. In Chrome/Edge you can also "Install" the page as an app for a borderless window.
 
+### New builds start fresh
+
+Every build has a stamp (shown bottom-left of the main menu, set in `public/js/build.js`). When you run a new build for the first time, your saved progress (cash, cars, upgrades, career, records, ghosts) and the local server's leaderboards are reset, so you see the new version from a clean start. Your settings, driver name and your own maps are kept, and the old leaderboard file is saved as a backup in `data/`. To reset by hand at any time use **Settings → Reset all progress**.
+
 ## Controls
 
 | Action | Keyboard | Gamepad (Xbox layout) |
@@ -50,7 +54,7 @@ Keyboard bindings can be changed in *Controls*. Gamepad dead-zone, steering sens
   * *Equipment* (**earned by finishing career series**): front / rear / wheel **spikes** (Rookie Cup), roof **auto-turret** and **rear guard** that shoots down rockets from behind (Pro Circuit), **homing missiles** and **cluster bombs** (Elite League). Everything you fit is drawn on your car.
 * **Weapons are locked on the first lap** for everyone. The rocket is unguided; homing missiles are the guided option.
 * **Rivals with personalities** - 16 named drivers with portraits, bios and driving styles (aggressive, precise, defensive...). A "Meet the field" screen shows who you're racing.
-* **Self-crossing circuits** - almost every circuit crosses itself: figure-of-eights, a trefoil with three crossings, loop-the-loops and lobed chains, with a **flyover at every crossing** and **tunnels** through the long gaps. Random and daily tracks do it too. Bots wait for trains only if they can't beat them across.
+* **Self-crossing circuits** - almost every circuit crosses itself: figure-of-eights, a trefoil with three crossings, loop-the-loops and lobed chains, with a **flyover at every crossing** and **tunnels** through the long gaps. Random and daily tracks do it too. Tunnels turn see-through while you drive inside them, so you never lose sight of your car. Each bot handles a level crossing in its own way: daredevils floor it (and sometimes get flattened), cautious drivers lift off and time their run to cross just after the train - nobody parks at the barrier.
 * **Track hazards** - a **railway that runs right across the map** with a train that flattens anything in its way, and a working level crossing (signals, barriers, bell) everywhere the line meets the road, a **pedestrian crossing** in the city, **water fords**, **jump ramps**, erupting **lava vents**, a **tidal wave** that rolls in off the ocean (coastal maps have a real sea along one edge), and an **air raid** in the Warzone where a bomber drops bombs (marked on the road a moment before they land).
 * **Raised roads, banking and mountains** - flyovers where the track crosses over itself, tunnels through hills, real 3D barriers, **banked curves** (the road surface tilts and the outer edge rises) and two **mountain maps** (Alpine Ascent, Red Summit) where switchback roads climb higher and higher up a mountain. Climbs slow you down and descents speed you up.
 * **Time Trial** - chase your **ghost**; your best lap is saved per track.

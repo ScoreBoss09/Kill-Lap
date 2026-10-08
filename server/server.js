@@ -14,6 +14,11 @@ fs.mkdirSync(path.join(DATA, 'tracks'), { recursive: true });
 
 /* ------------------------------------------------------------------ persistence */
 const LB_FILE = path.join(DATA, 'leaderboard.json');
+{ // a new game build starts with fresh leaderboards (the old file is kept as a backup)
+  let build = ''; try { build = (fs.readFileSync(path.join(PUB, 'js', 'build.js'), 'utf8').match(/BUILD = '([^']+)'/) || [])[1] || ''; } catch {}
+  const BF = path.join(DATA, 'build.txt'); let prev = ''; try { prev = fs.readFileSync(BF, 'utf8').trim(); } catch {}
+  if (build && prev !== build) { try { if (fs.existsSync(LB_FILE)) fs.renameSync(LB_FILE, path.join(DATA, 'leaderboard.' + (prev || 'old') + '.bak.json')); } catch {} try { fs.writeFileSync(BF, build); } catch {} console.log('New build ' + build + ': leaderboards reset'); }
+}
 let LB = { tracks: {}, players: {} };
 try { LB = JSON.parse(fs.readFileSync(LB_FILE, 'utf8')); } catch {}
 LB.tracks ||= {}; LB.players ||= {};

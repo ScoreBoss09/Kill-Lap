@@ -565,7 +565,7 @@ export class Game {
     if (Math.abs(c.lat) > T.hw[(f | 0) % N]) vmax *= 0.75;
     if (this.hazards && this.hazards.slowFor(c)) vmax = Math.min(vmax, 230);
     inp.throttle = sp < vmax ? 1 : 0; inp.brake = sp > vmax * 1.1 ? clamp((sp - vmax) / 90, 0.2, 1) : 0;
-    c.holding = false; if (this.hazards && this.hazards.holdFor(c)) { inp.throttle = 0; inp.brake = 1; c.holding = true; }
+    c.holding = false; if (this.hazards) { const cap = this.hazards.trainCap(c, st.top); if (cap < vmax) { vmax = cap; c.holding = cap < 60; inp.throttle = sp < vmax ? 1 : 0; inp.brake = sp > vmax * 1.1 ? clamp((sp - vmax) / 90, 0.2, 1) : 0; } }
     inp.hb = Math.abs(err) > 1.0 && sp > 160;
     // stuck / reverse
     if (c.revT > 0) { c.revT -= dt; inp.throttle = 0; inp.brake = 1; inp.steer = -inp.steer || 0.7; inp.hb = false; }
@@ -692,7 +692,9 @@ export class Game {
     const list = [];
     const P = this.sortedProps;
     for (let i = 0; i < P.length; i++) { const p = P[i]; if (v.visible(p.x, p.y, p.w ? 220 : 60)) list.push({ y: p.y + (p.type === 'dune' || p.type === 'lava' ? -200 : 0), k: 0, o: p }); }
-    for (const c of this.cars) if (!c.dead && !high(c) && v.visible(c.x, c.y, 60)) list.push({ y: c.y + 4, k: 2, o: c });
+    if (T.hasTun && !T.tnNear) { T.tnNear = new Uint8Array(T.N); for (let i = 0; i < T.N; i++) if (T.tn[i]) for (let k = -9; k <= 9; k++) T.tnNear[(i + k + T.N) % T.N] = 1; } // tunnel + portal approach
+    const inTun = o => T.hasTun && T.tnNear[(((o.pos | 0) % T.N) + T.N) % T.N] && (o.z || 0) < 12 && Math.abs(o.lat || 0) < T.hw[(((o.pos | 0) % T.N) + T.N) % T.N] + 70;
+    for (const c of this.cars) if (!c.dead && !high(c) && !inTun(c) && v.visible(c.x, c.y, 60)) list.push({ y: c.y + 4, k: 2, o: c });
     if (this.hazards) this.hazards.collect(list, v);
     list.sort((a, b) => a.y - b.y);
     const drawEntry = e => {
@@ -706,7 +708,14 @@ export class Game {
     for (const it of this.items) if (high(it) && v.visible(it.x, it.y, 60)) { if (it.t === 'boost' || it.t === 'oil' || it.active) drawItem(g, v, it, this.time); }
     for (const m of this.mines) if (high(m) && v.visible(m.x, m.y, 30)) drawMine(g, v, m, this.time);
     { const top = []; for (const c of this.cars) if (!c.dead && high(c) && v.visible(c.x, c.y, 60)) top.push({ y: c.z * 1000 + c.y, k: 2, o: c }); top.sort((a, b) => a.y - b.y); for (const e of top) drawEntry(e); }
-    if (T.hasTun) drawTunnels(g, v, T, vis);
+    if (T.hasTun) {
+      const tg = this.camTarget || this.human;
+      const focus = tg && T.tnNear[(((tg.pos | 0) % T.N) + T.N) % T.N] ? tg.pos | 0 : -1;
+      drawTunnels(g, v, T, vis, focus);
+      // everything underground is drawn over the hill (which is see-through when you're inside) so it never flickers out of sight
+      for (const it of this.items) if ((it.active || it.t === 'boost' || it.t === 'oil') && it.tn && v.visible(it.x, it.y, 60)) drawItem(g, v, it, this.time);
+      const under = []; for (const c of this.cars) if (!c.dead && !high(c) && inTun(c) && v.visible(c.x, c.y, 60)) under.push({ y: c.y, k: 2, o: c }); under.sort((a, b) => a.y - b.y); for (const e of under) { const c = e.o, near = focus >= 0 && Math.min(Math.abs(c.pos - focus), T.N - Math.abs(c.pos - focus)) < 90; drawCar(g, v, c, this.time, { night: this.night, alpha: near ? 1 : 0.42, tag: c !== this.human && this.mode !== 'attract', tagColor: c.remote ? '#9fe3ff' : '#ffd0a0' }); }
+    }
     if (this.hazards) this.hazards.drawTop(g, v, this.time);
     this.drawGantry(g);
     for (const p of this.proj) if (v.visible(p.x, p.y, 40)) drawProjectile(g, v, p, this.time);

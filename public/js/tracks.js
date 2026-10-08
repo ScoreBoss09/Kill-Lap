@@ -352,13 +352,13 @@ function placeItems(T, custom) {
       items.push(it);
     }
   }
-  T.items = items.map((it, k) => ({ ...it, id: k }));
+  T.items = items.map((it, k) => { const n = T.hasTun ? nearest(T, it.x, it.y, -1) : null; return { ...it, id: k, tn: !!(n && T.tn[n.i] && Math.abs(n.lat) < n.hw + 20 && (it.z || 0) < 12) }; });
 }
 
 
 /* ------------------------------------------------------------------ hazards */
 export const HAZ_TYPES = ['train', 'cross', 'ford', 'jump', 'lava', 'wave', 'bomber'];
-const THEME_HAZ = { desert: { jump: 2, train: 2 }, forest: { ford: 2, jump: 1, train: 1 }, snow: { jump: 1 }, city: { cross: 4 }, industrial: { train: 2, jump: 1 }, volcano: { lava: 4, jump: 1 }, coast: { wave: 1, ford: 1, jump: 1 }, mesa: { jump: 2, train: 2 }, warzone: { jump: 1 } };
+const THEME_HAZ = { desert: { jump: 2, train: 1 }, forest: { ford: 2, jump: 1, train: 1 }, snow: { jump: 1 }, city: { cross: 4 }, industrial: { train: 1, jump: 1 }, volcano: { lava: 4, jump: 1 }, coast: { wave: 1, ford: 1, jump: 1 }, mesa: { jump: 2, train: 1 }, warzone: { jump: 1 } };
 function placeHazards(T, custom) {
   const rng = mulberry32(T.seed ^ 0x2545f491), N = T.N, out = [];
   const th = THEME_HAZ[T.theme] || {};
@@ -372,7 +372,7 @@ function placeHazards(T, custom) {
       const span = type === 'wave' ? 9 : type === 'train' ? 9 : type === 'cross' ? 6 : type === 'lava' ? 3 : 10, lim = type === 'lava' ? 0.01 : type === 'wave' || type === 'cross' ? 0.0011 : type === 'train' ? 0.0009 : 0.0007;
       if (!flat(i, span, lim) || underDeck(i) || !far(T.x[i], T.y[i], type === 'cross' ? 1500 : type === 'train' ? 2200 : 1100, type)) continue;
       if (type === 'wave' && T.ocean) { const dist = -oceanAt(T, T.x[i], T.y[i]); if (dist < 500 || dist > 2700) continue; }
-      const p = pointAt(T, i, 0); const hz = { t: type, x: p.x, y: p.y, a: p.a, hw: T.hw[i], f: i, seed: Math.floor(rng() * 1e6), side: rng() < 0.5 ? 1 : -1 }; if (type === 'train') { setupRail(T, hz); if (!hz.cr.length) continue; } out.push(hz); placed++;
+      const p = pointAt(T, i, 0); const hz = { t: type, x: p.x, y: p.y, a: p.a, hw: T.hw[i], f: i, seed: Math.floor(rng() * 1e6), side: rng() < 0.5 ? 1 : -1 }; if (type === 'train') { if (!setupRail(T, hz, true)) continue; } out.push(hz); placed++;
     }
   }
   for (const c of custom) {
@@ -385,13 +385,26 @@ function placeHazards(T, custom) {
   for (const h of out) if (h.t === 'wave') { // the wave travels from the ocean strip inland, perpendicular to the shore
     if (T.ocean) { h.a = Math.atan2(-T.ocean.ix, T.ocean.iy); h.side = 1; h.R = Math.max(300, -oceanAt(T, h.x, h.y)) + 140; } else h.R = h.hw + 746;
   }
+  // no oil slicks / boost pads on a level crossing
+  const crs = out.filter(h => h.t === 'train').flatMap(h => h.cr || []);
+  if (crs.length) T.items = T.items.filter(it => !((it.t === 'oil' || it.t === 'boost') && crs.some(c => Math.hypot(it.x - c.x, it.y - c.y) < 300))).map((it, k) => ({ ...it, id: k }));
+  // level crossings: open a gap in the roadside barriers where the rails pass through
+  T.wallGap = new Uint8Array(N);
+  for (const h of out) if (h.t === 'train' && h.rx != null) for (let i = 0; i < N; i++) for (const [s, bit] of [[-1, 1], [1, 2]]) {
+    const p = pointAt(T, i, s * (T.hw[i] + VERGE)); if (Math.abs((p.x - h.x) * -h.ry + (p.y - h.y) * h.rx) < 54) T.wallGap[i] |= bit;
+  }
   if (T.data.bomber || (T.th.bomber && T.data.hazards !== false)) T.bomber = true;
   T.hazards = out.map((h, k) => ({ ...h, id: k }));
 }
 
 /** A railway crosses the whole map along a line through the hazard: find where it meets the road (each meeting becomes a level crossing). */
-function setupRail(T, h) {
-  const rx = Math.cos(h.a + Math.PI / 2), ry = Math.sin(h.a + Math.PI / 2), N = T.N; let u0 = -1e9, u1 = 1e9;
+function setupRail(T, h, strict = false) {
+  if (!strict) return railTry(T, h, 0, false);
+  for (const d of [0, 0.18, -0.18, 0.36, -0.36, 0.55, -0.55]) if (railTry(T, h, d, true)) return true;
+  return false;
+}
+function railTry(T, h, delta, strict) {
+  const rx = Math.cos(h.a + Math.PI / 2 + delta), ry = Math.sin(h.a + Math.PI / 2 + delta), N = T.N; let u0 = -1e9, u1 = 1e9;
   const lim = (p, d, max) => { if (Math.abs(d) < 1e-6) return; const a = -p / d, b = (max - p) / d; u0 = Math.max(u0, Math.min(a, b)); u1 = Math.min(u1, Math.max(a, b)); };
   lim(h.x, rx, T.W); lim(h.y, ry, T.H); h.rx = rx; h.ry = ry; h.u0 = u0; h.u1 = u1;
   const cr = [];
@@ -403,7 +416,15 @@ function setupRail(T, h) {
     const a = T.ang[i]; cr.push({ x: px, y: py, u, f: i + t, a, hw: T.hw[i], tx: Math.cos(a), ty: Math.sin(a), nx: -Math.sin(a), ny: Math.cos(a) });
   }
   cr.sort((p, q) => p.u - q.u); const out = []; for (const c of cr) if (!out.length || c.u - out[out.length - 1].u > 160) out.push(c);
-  h.cr = out;
+  h.cr = out; if (!strict) return true;
+  // a tidy railway: meets the road square-on, never runs alongside it, and stays clear of tunnels, flyovers and the start
+  if (!out.length || out.length > 4) return false;
+  for (const c of out) { if (Math.abs(rx * c.nx + ry * c.ny) < 0.82) return false; }
+  for (let i = 0; i < N; i++) {
+    const w = (T.x[i] - h.x) * -ry + (T.y[i] - h.y) * rx, reach = T.hw[i] + 170; if (Math.abs(w) > reach) continue;
+    if (!out.some(c => { const d = Math.min(Math.abs(c.f - i), N - Math.abs(c.f - i)); return d <= reach / (T.step * 0.8) + 2; }) || T.tn[i] || (T.z[i] >= 30 && !out.some(c => Math.abs(c.f - i) < 6))) return false;
+  }
+  return true;
 }
 
 /** Distance from a world point to the nearest road edge (negative on tarmac). Uses a coarse spatial hash. */
@@ -423,14 +444,19 @@ function placeProps(T, custom) {
   const clearDist = T.clearDist;
   const dens = (T.data.dens != null ? T.data.dens : th.dens) * 1.0;
   const area = T.W * T.H, target = Math.min(1100, Math.round((area / 90000) * 12 * dens));
+  const tunPts = [], deckPts = []; for (let i = 0; i < T.N; i += 2) { if (T.tn[i]) tunPts.push(i); if (T.z[i] >= 30) deckPts.push(i); }
+  const nearDeck = (x, y, r) => deckPts.some(i => Math.hypot(T.x[i] - x, T.y[i] - y) < T.hw[i] + r);
+  const nearTun = (x, y, r) => tunPts.some(i => Math.hypot(T.x[i] - x, T.y[i] - y) < T.hw[i] + r);
   const placedGrid = new Map(); const nearRail = (x, y, r = 135) => T.hazards.some(h => h.t === 'train' && Math.abs((x - h.x) * -h.ry + (y - h.y) * h.rx) < r);
   for (let tries = 0; props.length < target && tries < target * 12; tries++) {
     const px = rng() * T.W, py = rng() * T.H;
     const type = list[Math.floor(rng() * list.length)];
     const big = ['tower', 'building', 'container', 'tank', 'adobe', 'mesa', 'cabin', 'crane', 'billboard', 'hut', 'ruin'].includes(type);
-    const need = VERGE + 36 + (big ? 70 : 0);
+    const need = VERGE + 36 + (big ? 100 : 0);
     if (clearDist(px, py) < need) continue;
     if (T.ocean && oceanAt(T, px, py) > -80) continue;
+    if (tunPts.length && nearTun(px, py, 120 + (big ? 140 : 0))) continue;
+    if (deckPts.length && nearDeck(px, py, 90 + (big ? 190 : 0))) continue; // keep tall scenery from leaning over flyovers
     if (T.hazards.some(h => h.t === 'train' && Math.abs((px - h.x) * -h.ry + (py - h.y) * h.rx) < 135 + (big ? 130 : 0))) continue;
     const pk = Math.floor(px / 70) + Math.floor(py / 70) * 400; const q = placedGrid.get(pk);
     if (q && Math.hypot(q.x - px, q.y - py) < (big ? 120 : 34)) continue;

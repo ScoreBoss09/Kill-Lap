@@ -1,5 +1,6 @@
 // Local profile, settings, records, ghosts and custom tracks (localStorage). Everything is wrapped in try/catch so the game still runs without storage.
 import { CARS, UPG_KEYS, PERF_KEYS, UPGRADES, carValue } from './cars.js';
+import { BUILD } from './build.js';
 
 const KEY = 'killlap.v1';
 const DEFAULTS = () => ({
@@ -11,14 +12,18 @@ const DEFAULTS = () => ({
 let data = null;
 function load() {
   const d = DEFAULTS();
-  try { const raw = localStorage.getItem(KEY); if (raw) { const j = JSON.parse(raw); Object.assign(d, j); d.settings = Object.assign(DEFAULTS().settings, j.settings || {}); d.stats = Object.assign(DEFAULTS().stats, j.stats || {}); d.career = Object.assign({ done: {}, active: null, final: {} }, j.career || {}); } } catch {}
+  try { const raw = localStorage.getItem(KEY); if (raw) { let j = JSON.parse(raw);
+    if (j.build !== BUILD) { j = { name: j.name, settings: j.settings, customTracks: j.customTracks, server: j.server }; d.freshBuild = true; } // new build: clean slate
+    Object.assign(d, j); d.settings = Object.assign(DEFAULTS().settings, j.settings || {}); d.stats = Object.assign(DEFAULTS().stats, j.stats || {}); d.career = Object.assign({ done: {}, active: null, final: {} }, j.career || {}); } } catch {}
   // saves from older versions may lack newer fields
   d.career.done ||= {}; d.career.final ||= {}; d.upg ||= {}; d.owned = d.owned && d.owned.length ? d.owned : ['scrapper']; d.customTracks ||= {}; d.records ||= {}; d.ghosts ||= {}; d.achievements ||= {}; d.paints ||= {};
+  d.build = BUILD;
+  if (d.freshBuild) try { localStorage.setItem(KEY, JSON.stringify(d, (k, v) => k === 'freshBuild' ? undefined : v)); } catch {}
   return d;
 }
 const Store = {
   get d() { return data || (data = load()); },
-  save() { try { localStorage.setItem(KEY, JSON.stringify(this.d)); } catch (e) { console.warn('save failed', e); } },
+  save() { try { localStorage.setItem(KEY, JSON.stringify(this.d, (k, v) => k === 'freshBuild' ? undefined : v)); } catch (e) { console.warn('save failed', e); } },
   get s() { return this.d.settings; },
   upgOf(carId) { return (this.d.upg[carId] ||= {}); },
   owns(id) { return this.d.owned.includes(id); },
