@@ -484,7 +484,9 @@ function placeProps(T, custom) {
     if (type === 'mesa') { p.w = 220 + rng() * 160; p.d = 180 + rng() * 140; }
     if (type === 'container') { p.w = 100; p.d = 36; }
     if (type === 'tank') { p.w = 110; p.d = 110; }
-    if (type === 'hut') { p.w = 60 + rng() * 30; p.d = 50 + rng() * 25; }
+    if (type === 'hut') { p.w = 60 + rng() * 30; p.d = 50 + rng() * 25; p.h = 30 + rng() * 8; }
+    if (type === 'cabin') { p.w = 72 + rng() * 40; p.d = 56 + rng() * 30; p.h = 32 + rng() * 14; }
+    if (type === 'adobe') { p.w = 70 + rng() * 60; p.d = 60 + rng() * 50; p.h = 34 + rng() * 24; }
     return p; };
   const pick = arr => arr[Math.floor(rng() * arr.length)];
   // most scenery sits within sight of the road (that's where the camera is); the rest is spread over the whole map

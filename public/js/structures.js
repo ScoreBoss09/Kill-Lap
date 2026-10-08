@@ -128,7 +128,7 @@ export function tunnelRuns(T) {
 export function drawTunnels(g, v, T, vis, focus = -1) {
   const runs = tunnelRuns(T); if (!runs.length) return; const th = T.th, N = T.N, near = new Set(vis);
   const rock = [shade(th.wall, -0.2), shade(th.wall, -0.27), shade(th.wall, -0.14), shade(th.wall, -0.23)];
-  const rockP = Tex.world(v, 'rock', T.theme); g.save();
+  const rockP = Tex.world(v, 'rock', T.theme), grdP = Tex.world(v, 'ground', T.theme), grassy = ['forest', 'snow', 'coast', 'desert', 'warzone'].includes(T.theme); g.save();
   for (const idx of runs) {
     // the hill turns see-through while you are inside it, so the road and every car underneath stay visible
     let runA = 0.94; if (focus >= 0 && idx.some(q => Math.min(Math.abs(q - focus), N - Math.abs(q - focus)) < 20)) runA = 0.34; g.globalAlpha = runA;
@@ -140,10 +140,10 @@ export function drawTunnels(g, v, T, vis, focus = -1) {
       if (camLat > hi) quad(P(i, hi, 0), P(j, hj, 0), P(j, hj, TUN_H * 0.8), P(i, hi, TUN_H * 0.8), shade(th.wall, -0.45));
       if (camLat < -hi) quad(P(i, -hi, 0), P(j, -hj, 0), P(j, -hj, TUN_H * 0.8), P(i, -hi, TUN_H * 0.8), shade(th.wall, -0.45));
       // hill profile: rounded top built from lit strips (light from the top-left)
-      const strip = (l0, l1, h0, h1, col) => { g.globalAlpha = runA; texQuad(g, P(i, l0 * hi, h0), P(j, l0 * hj, h0), P(j, l1 * hj, h1), P(i, l1 * hi, h1), rockP, col, 0.45); g.globalAlpha = runA; };
+      const strip = (l0, l1, h0, h1, col, top) => { g.globalAlpha = runA; texQuad(g, P(i, l0 * hi, h0), P(j, l0 * hj, h0), P(j, l1 * hj, h1), P(i, l1 * hi, h1), top ? grdP : rockP, col, 0.45); g.globalAlpha = runA; };
       const prof = [[-1, 0.8], [-0.82, 0.93], [-0.5, 0.99], [0, 1], [0.5, 0.99], [0.82, 0.93], [1, 0.8]], lit = [-0.24, -0.12, 0.02, 0.1, -0.02, -0.14, -0.28];
       const base = rock[((i >> 4) * 3) % rock.length];
-      for (let q = 0; q < prof.length - 1; q++) strip(prof[q][0], prof[q + 1][0], TUN_H * prof[q][1], TUN_H * prof[q + 1][1], shade(base, (lit[q] + lit[q + 1]) / 2 + 0.02 + (((i * 2654435761) >>> 28) / 15 - 0.5) * 0.03));
+      for (let q = 0; q < prof.length - 1; q++) { const top = grassy && q >= 1 && q <= 4, k = (lit[q] + lit[q + 1]) / 2 + 0.02 + (((i * 2654435761) >>> 28) / 15 - 0.5) * 0.03; strip(prof[q][0], prof[q + 1][0], TUN_H * prof[q][1], TUN_H * prof[q + 1][1], top ? shade(th.ground, k * 0.8 - 0.06) : shade(base, k), top); } // grassy hilltop on green/sandy maps, rock flanks
       if (((i >> 1) & 3) === 0) { g.fillStyle = rgba(th.speck, 0.18); const m = P(i, (((i * 13) % 9) - 4) * hi / 6, TUN_H); g.beginPath(); g.arc(m[0], m[1], 9 * v.zoom, 0, TAU); g.fill(); }
       if (i % 5 === 0) { const m = P(i, (((i * 29) % 11) - 5) * hi / 7, TUN_H); g.fillStyle = th.night ? '#3a3040' : shade(th.ground, -0.3); g.beginPath(); g.arc(m[0], m[1], (5 + (i % 4)) * v.zoom, 0, TAU); g.fill(); g.fillStyle = shade(th.ground, 0.08); g.beginPath(); g.arc(m[0] - 2 * v.zoom, m[1] - 2 * v.zoom, 3 * v.zoom, 0, TAU); g.fill(); }
     }

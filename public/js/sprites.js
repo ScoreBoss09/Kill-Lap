@@ -35,9 +35,9 @@ export function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
   const c = Math.cos(rot), s = Math.sin(rot), hw = w / 2, hd = d / 2;
   const corners = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]].map(([a, b]) => [cx + a * c - b * s, cy + a * s + b * c]);
   // shadow polygon
-  g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath();
+  if (!opts.noShadow) { g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath();
   corners.forEach(([x, y], i) => { const X = v.sx(x) + h * 0.55 * v.zoom, Y = v.sy(y) + h * 0.4 * v.zoom; i ? g.lineTo(X, Y) : g.moveTo(X, Y); });
-  corners.forEach(([x, y]) => g.lineTo(v.sx(x), v.sy(y))); g.fill();
+  corners.forEach(([x, y]) => g.lineTo(v.sx(x), v.sy(y))); g.fill(); }
   const base = corners.map(([x, y]) => [v.px(x, y, 0), v.py(x, y, 0)]);
   const top = corners.map(([x, y]) => [v.px(x, y, h), v.py(x, y, h)]);
   for (let i = 0; i < 4; i++) {
@@ -56,13 +56,31 @@ export function box(g, v, cx, cy, w, d, h, rot, colWall, colRoof, opts = {}) {
       }
     }
   }
-  g.fillStyle = colRoof; g.beginPath(); top.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.fill();
-  if (opts.roof && v.quality > 0) { const pat = Tex.world(v, 'roof', opts.roof); if (pat) { g.save(); g.imageSmoothingEnabled = false; g.globalAlpha = 0.82; g.fillStyle = pat; g.fill(); g.restore(); } }
-  g.strokeStyle = shade(colRoof, -0.3); g.lineWidth = Math.max(1, v.zoom); g.stroke();
+  const pat = opts.roof && v.quality > 0 ? Tex.world(v, 'roof', opts.roof) : null;
+  const poly = (pts, col) => { g.fillStyle = col; g.beginPath(); pts.forEach(([x, y], k) => k ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.fill(); if (pat) { g.save(); g.imageSmoothingEnabled = false; g.globalAlpha = opts.roofA ?? 0.8; g.fillStyle = pat; g.fill(); g.restore(); } };
+  if (opts.gable) { // pitched roof: two lit slopes meeting at a ridge along the long side, gable ends in the wall colour
+    const rise = Math.min(w, d) * 0.4, alongW = w >= d, m = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const [ra, rb] = alongW ? [m(corners[0], corners[3]), m(corners[1], corners[2])] : [m(corners[0], corners[1]), m(corners[3], corners[2])];
+    const R = p => [v.px(p[0], p[1], h + rise), v.py(p[0], p[1], h + rise)], RA = R(ra), RB = R(rb);
+    const slopes = alongW ? [[[top[0], top[1], RB, RA], [-s, c]], [[top[3], top[2], RB, RA], [s, -c]]] : [[[top[0], top[3], RB, RA], [-c, -s]], [[top[1], top[2], RB, RA], [c, s]]];
+    const ends = alongW ? [[top[0], RA, top[3]], [top[1], RB, top[2]]] : [[top[0], RA, top[1]], [top[3], RB, top[2]]];
+    g.fillStyle = shade(colWall, -0.12); for (const e of ends) { g.beginPath(); e.forEach(([x, y], k) => k ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.fill(); }
+    const wall = sl => { const n = sl[1]; return (v.x - cx) * n[0] + (v.y - cy) * n[1]; }; slopes.sort((a, b) => wall(a) - wall(b)); // far slope first
+    for (const sl of slopes) { const n = sl[1], light = clamp(0.5 + (n[0] * -0.5 + n[1] * -0.8) * 0.32, 0.15, 0.9); sl[1] = n; poly(sl[0], shade(colRoof, (light - 0.5) * 0.7)); }
+    g.strokeStyle = shade(colRoof, -0.35); g.lineWidth = Math.max(1, 1.6 * v.zoom); g.beginPath(); g.moveTo(RA[0], RA[1]); g.lineTo(RB[0], RB[1]); g.stroke();
+    return top;
+  }
+  poly(top, colRoof);
+  g.strokeStyle = shade(colRoof, -0.3); g.lineWidth = Math.max(1, v.zoom); g.beginPath(); top.forEach(([x, y], k) => k ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.stroke();
+  if (opts.flat) { // flat roof: inner parapet rim + a couple of rooftop units
+    const inset = top.map(([x, y]) => { const mx = top.reduce((a, p) => a + p[0], 0) / 4, my = top.reduce((a, p) => a + p[1], 0) / 4; return [mx + (x - mx) * 0.86, my + (y - my) * 0.86]; });
+    g.strokeStyle = shade(colRoof, -0.22); g.lineWidth = Math.max(1, 2 * v.zoom); g.beginPath(); inset.forEach(([x, y], k) => k ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.stroke();
+    const r = opts.seed || 0.5; for (let k = 0; k < 2; k++) { const u = (((r * 7 + k * 0.37) % 1) - 0.5) * w * 0.5, q = (((r * 13 + k * 0.61) % 1) - 0.5) * d * 0.5; box(g, v, cx + u * c - q * s, cy + u * s + q * c, 16 + k * 8, 14, h + 8 + k * 4, rot, shade(colRoof, -0.15), shade(colRoof, 0.12), { noShadow: true }); }
+  }
   return top;
 }
 
-const WALLCOL = { ruin: ['#7d7a70', '#5e5b52'], adobe: ['#c79a62', '#d9b07a'], cabin: ['#7a4e2d', '#d8e2ea'], building: ['#6c6f7d', '#8a8d9b'], tower: ['#3d4558', '#566078'], container: null, hut: ['#c8a165', '#a1472f'], billboard: ['#555', '#777'] };
+const WALLCOL = { ruin: ['#7d7a70', '#5e5b52'], adobe: ['#c79a62', '#d9b07a'], cabin: ['#7a4e2d', '#e6edf2'], building: ['#6c6f7d', '#8a8d9b'], tower: ['#3d4558', '#566078'], container: null, hut: ['#c8a165', '#a1472f'], billboard: ['#555', '#777'] };
 
 export function drawProp(g, v, p, th, t) {
   const x = p.x, y = p.y, s = p.s, r = mulberry32((p.v * 1e9) | 0), wind = Math.sin(t * 1.4 + p.v * 30) * 1.7;
@@ -146,7 +164,10 @@ export function drawProp(g, v, p, th, t) {
     case 'adobe': case 'cabin': case 'building': case 'hut': case 'tower': {
       const [wc, rc] = WALLCOL[p.type]; const night = th.night;
       const rot = p.al ? p.r : Math.round(p.r / (Math.PI / 2)) * (Math.PI / 2) + (p.v - 0.5) * 0.2;
-      box(g, v, x, y, p.w * (p.type === 'hut' ? 0.5 : 1), p.d * (p.type === 'hut' ? 0.5 : 1), p.type === 'hut' ? 38 : p.h, rot, shade(wc, ((p.v * 7) % 1 - 0.5) * 0.3), rc, { roof: p.type === 'adobe' || p.type === 'hut' ? 'red' : p.type === 'building' || p.type === 'tower' ? 'grey' : null, windows: night ? '#ffe9a0' : (p.type === 'building' || p.type === 'tower' ? 'rgba(160,200,230,0.65)' : null) });
+      const ty = p.type, small = !p.al && (ty === 'hut') ? 0.6 : 1, wcol = shade(wc, ((p.v * 7) % 1 - 0.5) * 0.3);
+      const o = ty === 'cabin' ? { gable: true, roof: 'grey', roofA: 0.22 } : ty === 'hut' ? { gable: true } : ty === 'adobe' ? { flat: true, seed: p.v } : { flat: true, seed: p.v };
+      o.windows = night ? (ty === 'hut' || ty === 'adobe' || ty === 'cabin' ? null : '#ffe9a0') : (ty === 'building' || ty === 'tower' ? 'rgba(160,200,230,0.65)' : null);
+      box(g, v, x, y, p.w * small, p.d * small, ty === 'hut' ? Math.min(p.h || 38, 38) : p.h, rot, wcol, ty === 'hut' ? '#c9a24f' : rc, o);
       break;
     }
     case 'container': {
