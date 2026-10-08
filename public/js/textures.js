@@ -3,7 +3,7 @@ const T = { images: {}, patterns: {}, loaded: false };
 export default T;
 
 /** world size (px) that one texture tile covers - a car is about 40px long */
-const TILE = { ground: 512, road: 256, verge: 256 };
+const TILE = { ground: 512, road: 256, verge: 256, rock: 256, wall: 256, water: 192 };
 const kind = name => name.split('_')[0];
 
 T.load = async function () {
@@ -22,4 +22,13 @@ T.get = function (type, theme) {
     if (p && p.setTransform) p.setTransform(new DOMMatrix().scale((TILE[kind(key)] || 512) / img.width)); this.patterns[key] = p;
   }
   return this.patterns[key];
+};
+
+/** pattern anchored to the world (follows the camera) for dynamically drawn 3D surfaces; call once per frame per texture */
+T.world = function (v, type, theme, sx = 0, sy = 0) {
+  const key = (theme && this.images[type + '_' + theme]) ? type + '_' + theme : this.images[type] ? type : null; if (!key) return null;
+  const img = this.images[key]; this.wp = this.wp || {};
+  if (!this.wp[key]) { const c = document.createElement('canvas'); c.width = 4; c.height = 4; this.wp[key] = c.getContext('2d').createPattern(img, 'repeat'); }
+  const p = this.wp[key]; if (p && p.setTransform) p.setTransform(new DOMMatrix().translate(v.W / 2 - v.x * v.zoom + sx * v.zoom, v.H / 2 - v.y * v.zoom + sy * v.zoom).scale(v.zoom * (TILE[kind(key)] || 512) / img.width));
+  return p;
 };

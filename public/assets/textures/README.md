@@ -32,3 +32,11 @@ Avoid sites that don't allow redistribution if you plan to share the game.
 
 ## Static hosting without the Node server
 Add a `manifest.json` here containing a JSON array of your file names, e.g. `["ground_desert.jpg","road.jpg"]`.
+
+## Bundled textures
+
+This folder ships with 20 pixel-art textures taken from the "PNG - Pixel Art Textures" pack supplied by the project owner:
+per-theme terrain (`ground_*`), `road`, `road_city`, `road_industrial`, `verge`, `verge_*`, `rock` (mountain earthworks and tunnels),
+`wall` (deck shoulders) and `water` (the ford). The pack's licence allows use in games but not redistribution of the pack itself,
+so only the files the game uses are included. Delete any file to fall back to the procedural look; drop in a same-named file to replace it.
+Pixel art is drawn with smoothing off so it stays crisp.

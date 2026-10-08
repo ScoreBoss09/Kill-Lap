@@ -115,7 +115,7 @@ Anything you do not provide keeps using the built-in synth. See `public/assets/a
 
 ## Textures
 
-The game draws everything procedurally, but you can drop your own seamless top-down images into `public/assets/textures/` (ground per theme, road, verge). See the README in that folder for the exact names and free CC0 sources (ambientCG, Poly Haven, Kenney).
+The game draws everything procedurally, but you can drop your own seamless top-down images into `public/assets/textures/` (ground per theme, road, verge). See the README in that folder for the exact names and free CC0 sources (ambientCG, Poly Haven, Kenney). The repo bundles 20 pixel-art textures (see that README for credits and licence notes); delete or replace any of them.
 
 ## Project layout
 

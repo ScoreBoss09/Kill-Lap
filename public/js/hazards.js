@@ -3,6 +3,7 @@ import { clamp, mulberry32, hashStr, TAU, rgba, shade } from './util.js';
 import { box } from './sprites.js';
 import { pointAt, VERGE } from './tracks.js';
 import Audio from './audio.js';
+import Tex from './textures.js';
 import Input from './input.js';
 
 const TRAIN_SPEED = 780, TRAIN_LEN = 650, WAVE_SPEED = 330;
@@ -225,6 +226,7 @@ export class Hazards {
     const X = v.sx(h.x), Y = v.sy(h.y); g.save(); g.translate(X, Y); g.rotate(h.a); g.scale(v.zoom, v.zoom);
     const L = 78, Wd = h.hw + 6; const gr = g.createLinearGradient(0, -Wd, 0, Wd); gr.addColorStop(0, 'rgba(60,130,190,0.15)'); gr.addColorStop(0.12, 'rgba(60,135,195,0.7)'); gr.addColorStop(0.88, 'rgba(60,135,195,0.7)'); gr.addColorStop(1, 'rgba(60,130,190,0.15)');
     g.fillStyle = gr; g.beginPath(); g.roundRect(-L, -Wd, L * 2, Wd * 2, 18); g.fill();
+    const wp = Tex.get('water'); if (wp) { g.save(); g.clip(); g.imageSmoothingEnabled = false; g.globalAlpha = 0.55; g.translate(((time * 14) % 192), 0); g.fillStyle = wp; g.fillRect(-L - 200, -Wd, L * 2 + 400, Wd * 2); g.restore(); }
     g.strokeStyle = 'rgba(235,248,255,0.5)'; g.lineWidth = 1.6; for (let k = 0; k < 5; k++) { g.beginPath(); for (let y = -Wd + 6; y <= Wd - 6; y += 6) { const x = -L + 14 + ((time * 22 + k * 32) % (L * 2 - 28)) + Math.sin(y * 0.09 + time * 3) * 4; y === -Wd + 6 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke(); }
     g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 4; g.lineJoin = 'round'; for (const sx of [-L, L]) { g.beginPath(); for (let y = -Wd + 8; y <= Wd - 8; y += 6) { const x = sx + Math.sin(y * 0.2 + time * 5) * 3; y === -Wd + 8 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke(); }
     g.fillStyle = 'rgba(255,255,255,0.22)'; g.beginPath(); g.ellipse(-24, -Wd * 0.35, 30, 6, 0.2, 0, TAU); g.fill(); g.restore();

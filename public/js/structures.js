@@ -1,8 +1,16 @@
 // Road structures drawn as real (perspective-projected) 3D geometry: barriers, raised decks, pillars, tunnels.
 import { shade, rgba, clamp, TAU } from './util.js';
 import { box } from './sprites.js';
+import Tex from './textures.js';
 
 export const WALL_H = 15, DECK_T = 12, TUN_H = 84;
+/** fill a quad with a world-anchored texture (if available) tinted towards `col`; otherwise a flat colour */
+function texQuad(g, a, b, c, d, pat, col, alpha) {
+  g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath();
+  if (!pat) { g.fillStyle = col; g.strokeStyle = col; g.lineWidth = 1.2; g.lineJoin = 'round'; g.fill(); g.stroke(); return; }
+  g.imageSmoothingEnabled = false; g.fillStyle = pat; g.strokeStyle = pat; g.lineWidth = 1.2; g.lineJoin = 'round'; g.fill(); g.stroke(); g.imageSmoothingEnabled = true;
+  g.globalAlpha = alpha; g.fillStyle = col; g.fill(); g.globalAlpha = 1;
+}
 const pt = (T, i, lat) => [T.x[i] - T.ty[i] * lat, T.y[i] + T.tx[i] * lat];
 
 /** indices of samples near the view (ascending); recomputed once per frame */
@@ -50,6 +58,7 @@ export function drawDecks(g, v, T, vis) {
   for (const i of vis) { const j = (i + 1) % N; if (T.elev[i] || T.elev[j]) segs.push(i); }
   if (!segs.length) return;
   const conc = shade(th.wall, -0.1), concTop = shade(th.wallTop, 0.05);
+  const rockP = Tex.world(v, 'rock', T.theme), roadP = Tex.world(v, 'road', T.theme), wallP = Tex.world(v, 'wall', T.theme), grdP = Tex.world(v, 'ground', T.theme);
   for (const i of segs) if (i % 6 === 0 && T.z[i] >= 18 && T.z[i] < 60 && Math.abs(T.tilt[i]) < 10) for (const s of [-0.55, 0.55]) { const [x, y] = pt(T, i, s * T.hw[i]); box(g, v, x, y, 15, 20, T.z[i] - DECK_T, T.ang[i], conc, concTop); }
   segs.sort((a, b) => (T.z[a] + T.z[(a + 1) % N]) - (T.z[b] + T.z[(b + 1) % N]) || a - b);
   for (const i of segs) {
@@ -66,8 +75,8 @@ export function drawDecks(g, v, T, vis) {
         const ri = clamp(zi * 0.55, 20, 150), rj = clamp(zj * 0.55, 20, 150), eI = s * oi, eJ = s * oj;
         const mI = [pt(T, i, eI + s * ri * 0.4), zl(i, eI) * 0.6], mJ = [pt(T, j, eJ + s * rj * 0.4), zl(j, eJ) * 0.6];
         const PM = (m) => [v.px(m[0][0], m[0][1], m[1]), v.py(m[0][0], m[0][1], m[1])];
-        quad(P(i, eI), P(j, eJ), PM(mJ), PM(mI), shade(th.wall, -0.2 + jit));
-        quad(PM(mI), PM(mJ), G(j, eJ + s * rj), G(i, eI + s * ri), shade(th.ground, -0.34 + jit));
+        texQuad(g, P(i, eI), P(j, eJ), PM(mJ), PM(mI), rockP, shade(th.wall, -0.2 + jit), 0.42);
+        texQuad(g, PM(mI), PM(mJ), G(j, eJ + s * rj), G(i, eI + s * ri), grdP, shade(th.ground, -0.34 + jit), 0.5);
         // rock strata + shadowed foot make the climb read as solid ground
         g.lineWidth = 1.4; g.strokeStyle = 'rgba(0,0,0,0.22)'; g.beginPath(); const a1 = PM(mI), b1 = PM(mJ); g.moveTo(a1[0], a1[1]); g.lineTo(b1[0], b1[1]);
         const a2 = [(P(i, eI)[0] + a1[0]) / 2, (P(i, eI)[1] + a1[1]) / 2], b2 = [(P(j, eJ)[0] + b1[0]) / 2, (P(j, eJ)[1] + b1[1]) / 2]; g.moveTo(a2[0], a2[1]); g.lineTo(b2[0], b2[1]);
@@ -78,9 +87,9 @@ export function drawDecks(g, v, T, vis) {
       if (camLat < -oi) quad(P(i, -oi), P(j, -oj), P(j, -oj, -DECK_T), P(i, -oi, -DECK_T), shade(th.wall, -0.3));
     }
     // road surface: shoulders + tilted tarmac
-    quad(P(i, -oi), P(j, -oj), P(j, -hj), P(i, -hi), shade(th.wall, 0.05));
-    quad(P(i, hi), P(j, hj), P(j, oj), P(i, oi), shade(th.wall, 0.05));
-    quad(P(i, -hi), P(j, -hj), P(j, hj), P(i, hi), (i >> 3) & 1 ? th.road : shade(th.road, 0.03));
+    texQuad(g, P(i, -oi), P(j, -oj), P(j, -hj), P(i, -hi), wallP, shade(th.wall, 0.05), 0.3);
+    texQuad(g, P(i, hi), P(j, hj), P(j, oj), P(i, oi), wallP, shade(th.wall, 0.05), 0.3);
+    texQuad(g, P(i, -hi), P(j, -hj), P(j, hj), P(i, hi), roadP, (i >> 3) & 1 ? th.road : shade(th.road, 0.03), 0.38);
     g.strokeStyle = th.line; g.globalAlpha = 0.8; g.lineWidth = Math.max(1, 3.2 * v.scale(zi)); g.beginPath();
     for (const s of [-1, 1]) { const a = P(i, s * (hi - 9)), b = P(j, s * (hj - 9)); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); }
     if (i % 4 < 2) { const a = P(i, 0), b = P(j, 0); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); }
@@ -106,7 +115,7 @@ export function tunnelRuns(T) {
 export function drawTunnels(g, v, T, vis) {
   const runs = tunnelRuns(T); if (!runs.length) return; const th = T.th, N = T.N, near = new Set(vis);
   const rock = [shade(th.wall, -0.2), shade(th.wall, -0.27), shade(th.wall, -0.14), shade(th.wall, -0.23)];
-  g.save(); g.globalAlpha = 0.93;
+  const rockP = Tex.world(v, 'rock', T.theme); g.save(); g.globalAlpha = 0.93;
   for (const idx of runs) {
     for (let k = 0; k < idx.length - 1; k++) {
       const i = idx[k], j = idx[k + 1]; if (!near.has(i) && !near.has(j)) continue;
@@ -116,7 +125,7 @@ export function drawTunnels(g, v, T, vis) {
       if (camLat > hi) quad(P(i, hi, 0), P(j, hj, 0), P(j, hj, TUN_H * 0.8), P(i, hi, TUN_H * 0.8), shade(th.wall, -0.45));
       if (camLat < -hi) quad(P(i, -hi, 0), P(j, -hj, 0), P(j, -hj, TUN_H * 0.8), P(i, -hi, TUN_H * 0.8), shade(th.wall, -0.45));
       // hill profile: rounded top built from lit strips (light from the top-left)
-      const strip = (l0, l1, h0, h1, col) => quad(P(i, l0 * hi, h0), P(j, l0 * hj, h0), P(j, l1 * hj, h1), P(i, l1 * hi, h1), col);
+      const strip = (l0, l1, h0, h1, col) => { g.globalAlpha = 0.93; texQuad(g, P(i, l0 * hi, h0), P(j, l0 * hj, h0), P(j, l1 * hj, h1), P(i, l1 * hi, h1), rockP, col, 0.45); g.globalAlpha = 0.93; };
       const prof = [[-1, 0.8], [-0.82, 0.93], [-0.5, 0.99], [0, 1], [0.5, 0.99], [0.82, 0.93], [1, 0.8]], lit = [-0.24, -0.12, 0.02, 0.1, -0.02, -0.14, -0.28];
       const base = rock[((i >> 4) * 3) % rock.length];
       for (let q = 0; q < prof.length - 1; q++) strip(prof[q][0], prof[q + 1][0], TUN_H * prof[q][1], TUN_H * prof[q + 1][1], shade(base, (lit[q] + lit[q + 1]) / 2 + 0.02 + (((i * 2654435761) >>> 28) / 15 - 0.5) * 0.03));

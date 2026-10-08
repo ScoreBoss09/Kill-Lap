@@ -343,14 +343,14 @@ function placeProps(T, custom) {
   const clearDist = T.clearDist;
   const dens = (T.data.dens != null ? T.data.dens : th.dens) * 1.0;
   const area = T.W * T.H, target = Math.min(1100, Math.round((area / 90000) * 12 * dens));
-  const placedGrid = new Map();
+  const placedGrid = new Map(); const nearRail = (x, y, r = 135) => T.hazards.some(h => h.t === 'train' && Math.abs((x - h.x) * -h.ry + (y - h.y) * h.rx) < r);
   for (let tries = 0; props.length < target && tries < target * 12; tries++) {
     const px = rng() * T.W, py = rng() * T.H;
     const type = list[Math.floor(rng() * list.length)];
     const big = ['tower', 'building', 'container', 'tank', 'adobe', 'mesa', 'cabin', 'crane', 'billboard', 'hut', 'ruin'].includes(type);
     const need = VERGE + 36 + (big ? 70 : 0);
     if (clearDist(px, py) < need) continue;
-    if (T.hazards.some(h => h.t === 'train' && Math.abs((px - h.x) * -h.ry + (py - h.y) * h.rx) < 80 + (big ? 60 : 0))) continue;
+    if (T.hazards.some(h => h.t === 'train' && Math.abs((px - h.x) * -h.ry + (py - h.y) * h.rx) < 135 + (big ? 130 : 0))) continue;
     const pk = Math.floor(px / 70) + Math.floor(py / 70) * 400; const q = placedGrid.get(pk);
     if (q && Math.hypot(q.x - px, q.y - py) < (big ? 120 : 34)) continue;
     const pr = { type, x: px, y: py, s: 0.75 + rng() * 0.7, r: rng() * TAU, v: rng() };
@@ -362,10 +362,10 @@ function placeProps(T, custom) {
     const c = Math.abs(T.curv[i]); if (T.elev[i] || T.tn[i]) continue;
     if (c > 0.0011 && i % 5 === 0) {
       const side = T.curv[i] > 0 ? -1 : 1; // outside of the corner
-      const p = pointAt(T, i, side * (T.hw[i] + VERGE + 14));
+      const p = pointAt(T, i, side * (T.hw[i] + VERGE + 14)); if (nearRail(p.x, p.y)) continue;
       props.push({ type: 'tyres', x: p.x, y: p.y, s: 1, r: p.a, v: rng() });
     } else if (th.night && i % 22 === 0) {
-      const p = pointAt(T, i, (i % 44 ? 1 : -1) * (T.hw[i] + VERGE + 30));
+      const p = pointAt(T, i, (i % 44 ? 1 : -1) * (T.hw[i] + VERGE + 30)); if (nearRail(p.x, p.y)) continue;
       props.push({ type: 'lamp', x: p.x, y: p.y, s: 1, r: 0, v: rng() });
     }
   }

@@ -112,17 +112,18 @@ export class Ground {
     g.beginPath(); g.rect(ox, oy, TS, TS); g.clip();
     // base + noise
     g.fillStyle = th.ground; g.fillRect(ox, oy, TS, TS);
+    g.imageSmoothingEnabled = false; // keep pixel-art textures crisp
+    const gt = Tex.get('ground', T.theme); if (gt) { g.fillStyle = gt; g.fillRect(ox, oy, TS, TS); }
     // large soft blotches (deterministic per 256px cell => seamless across tiles)
     const C = 256;
     for (let cy = Math.floor((oy - 200) / C); cy <= Math.floor((oy + TS + 200) / C); cy++) for (let cx = Math.floor((ox - 200) / C); cx <= Math.floor((ox + TS + 200) / C); cx++) {
       const r = mulberry32(hashStr(cx + ',' + cy) ^ T.seed);
       for (let k = 0; k < 3; k++) {
         const bx = (cx + r()) * C, by = (cy + r()) * C, br = 70 + r() * 150, col = r() < 0.5 ? th.ground2 : th.speck;
-        const gr = g.createRadialGradient(bx, by, 0, bx, by, br); gr.addColorStop(0, rgba(col, 0.45)); gr.addColorStop(1, rgba(col, 0));
+        const gr = g.createRadialGradient(bx, by, 0, bx, by, br); gr.addColorStop(0, rgba(col, gt ? 0.16 : 0.45)); gr.addColorStop(1, rgba(col, 0));
         g.fillStyle = gr; g.fillRect(bx - br, by - br, br * 2, br * 2);
       }
     }
-    { const gt = Tex.get('ground', T.theme); if (gt) { g.globalAlpha = 0.92; g.fillStyle = gt; g.fillRect(ox, oy, TS, TS); g.globalAlpha = 1; } }
     if (q >= 1) { g.fillStyle = noisePattern(g, 'light'); g.fillRect(ox, oy, TS, TS); g.fillStyle = noisePattern(g, 'dark'); g.fillRect(ox, oy, TS, TS); }
     this.terrainFeatures(g, ox, oy, C);
     // verge
